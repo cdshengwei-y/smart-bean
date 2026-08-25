@@ -6,7 +6,7 @@
 
 ## 背景
 
-- 当天协商结果 `/Users/jh-05/Documents/ChatGPT/日清夜跑执行者/共享调度/协商结果-2026-08-25.md` 仍为“待用户选择”，没有有效的唯一目标；本计划按候选项和上一轮最直接的本地验收缺口保守选择，未将其描述为用户已确认。
+- 当天协商结果 `/Users/jh-05/Documents/ChatGPT/日清夜跑执行者/共享调度/协商结果-2026-08-25.md` 已记录用户确认目标“统一 Windows/macOS 安装器使用 Obsidian 图标，并增加图标身份回归检查”，本计划严格按该目标执行。
 - 2026-08-24 本地发布门禁为 `PASS=25 / FAIL=0 / N/A=4`；安装器、Obsidian 插件和图标已有本地验证，但跨平台统一图标身份尚未形成独立回归合同。
 
 ## 范围
@@ -62,5 +62,5 @@
 
 - 当前计划：`/Users/jh-05/Documents/ChatGPT/日清夜跑执行者/共享调度/plan.md`
 - 计划归档：`/Users/jh-05/Documents/ChatGPT/日清夜跑执行者/共享调度/产出/plan-2026-08-25.md`
-- 协商结果：`/Users/jh-05/Documents/ChatGPT/日清夜跑执行者/共享调度/协商结果-2026-08-25.md`（待用户选择）
+- 协商结果：`/Users/jh-05/Documents/ChatGPT/日清夜跑执行者/共享调度/协商结果-2026-08-25.md`（已确认）
 - 目标项目：`/Users/jh-05/Documents/smart recording beam`
