@@ -1,2 +1,18 @@
+# 本地工作数据与临时产物
+.workbuddy/
 tmp/
+tmp-download-check/
+output/
+outputs/
+release/
+*.log
 .DS_Store
+
+# PlatformIO 构建产物
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# 编辑器
+.vscode/
+.idea/
