@@ -920,7 +920,8 @@ class JobRepository:
 
     def status_counts(self) -> dict[str, int]:
         rows = self.connection.execute(
-            "SELECT status, COUNT(*) AS count FROM transcription_jobs GROUP BY status"
+            "SELECT status, COUNT(*) AS count FROM transcription_jobs "
+            "WHERE object_name NOT LIKE '%/live/%' GROUP BY status"
         ).fetchall()
         return {str(row["status"]): int(row["count"]) for row in rows}
 
@@ -930,6 +931,7 @@ class JobRepository:
                 """
                 SELECT device_id, status, COUNT(*) AS count
                 FROM transcription_jobs
+                WHERE object_name NOT LIKE '%/live/%'
                 GROUP BY device_id, status
                 ORDER BY device_id, status
                 """
@@ -1419,13 +1421,22 @@ class JobRepository:
         return row
 
     def list_completed_notes(self, device_id: str) -> List[sqlite3.Row]:
+        # "completed" 之外，凡已生成可读笔记的任务（转写完成、AI 润色中/失败）
+        # 也进入同步列表：Obsidian 插件按 etag 增量拉取，可先看到流式转写文字，
+        # AI 完成后内容自动更新为终版。
         return list(
             self.connection.execute(
                 """
                 SELECT current.id, current.note_object_name, current.updated_at
                 FROM transcription_jobs AS current
-                WHERE current.device_id = ? AND current.status = 'completed'
-                    AND current.note_object_name != ''
+                WHERE current.device_id = ? AND current.note_object_name != ''
+                    AND (
+                        current.status = 'completed'
+                        OR current.status IN (
+                            'note_pending', 'note_processing', 'ai_pending',
+                            'filtering', 'ai_failed', 'note_failed'
+                        )
+                    )
                     AND NOT EXISTS (
                         SELECT 1
                         FROM transcription_jobs AS newer
@@ -1450,8 +1461,14 @@ class JobRepository:
             """
             SELECT current.id, current.note_object_name, current.updated_at
             FROM transcription_jobs AS current
-            WHERE current.id = ? AND current.device_id = ? AND current.status = 'completed'
-                AND current.note_object_name != ''
+            WHERE current.id = ? AND current.device_id = ? AND current.note_object_name != ''
+                AND (
+                    current.status = 'completed'
+                    OR current.status IN (
+                        'note_pending', 'note_processing', 'ai_pending',
+                        'filtering', 'ai_failed', 'note_failed'
+                    )
+                )
                 AND NOT EXISTS (
                     SELECT 1
                     FROM transcription_jobs AS newer
@@ -1470,7 +1487,40 @@ class JobRepository:
         ).fetchone()
 
     def list_jobs(self) -> List[sqlite3.Row]:
-        return list(self.connection.execute("SELECT * FROM transcription_jobs ORDER BY id"))
+        return list(
+            self.connection.execute(
+                "SELECT * FROM transcription_jobs "
+                "WHERE object_name NOT LIKE '%/live/%' ORDER BY id"
+            )
+        )
+
+    def upsert_live_preview_job(
+        self,
+        object_name: str,
+        device_id: str,
+        note_object_name: str,
+    ) -> int:
+        """为直播预览聚合笔记维护一个专用任务行（live/ 路径不参与常规发现）。
+
+        权威完整录音上传后由 discover 建独立行，聚合行随后被
+        list_completed_notes 的 NOT EXISTS 规则自然遮蔽。
+        """
+        now = _now()
+        self.connection.execute(
+            """
+            INSERT OR IGNORE INTO transcription_jobs
+                (object_name, device_id, etag, size, status, created_at, updated_at)
+            VALUES (?, ?, 'preview', 0, 'note_pending', ?, ?)
+            """,
+            (object_name, device_id, now, now),
+        )
+        row = self.connection.execute(
+            "SELECT id FROM transcription_jobs WHERE object_name = ?",
+            (object_name,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("直播预览任务行写入失败：%s" % object_name)
+        return int(row["id"])
 
     def close(self) -> None:
         self.connection.close()

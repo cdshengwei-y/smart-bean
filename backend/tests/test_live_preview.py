@@ -147,14 +147,19 @@ class LivePreviewPipelineTest(unittest.TestCase):
             profile_store=None,
         )
 
-    def test_segments_aggregate_into_one_preview_note(self) -> None:
+    def test_segments_aggregate_into_preview_job_and_note(self) -> None:
         scanner = self._scanner()
         processed = scanner.process_live_previews()
         self.assertEqual(processed, 1)
         self.assertEqual(self.transcriber.calls, 2)
-        note = self.store.uploaded_notes["notes/bean_x/REC_001.md"]
-        self.assertIn("分段文字[REC_001__s01.wav]", note)
-        self.assertIn("分段文字[REC_001__s02.wav]", note)
+        # 预览任务行已建立并完成转录
+        note_job = self.repository.claim_next_note(3, 60)
+        self.assertIsNotNone(note_job)
+        self.assertEqual(note_job.note_object_name, "notes/bean_x/REC_001.md")
+        self.assertIn("分段文字[REC_001__s01.wav]", note_job.transcript)
+        self.assertIn("分段文字[REC_001__s02.wav]", note_job.transcript)
+        self.assertTrue(scanner.process_note_job(note_job))
+        self.assertIn("分段文字[REC_001__s01.wav]", self.store.uploaded_notes["notes/bean_x/REC_001.md"])
         # 状态已持久化：再次运行不会重复转写
         processed_again = scanner.process_live_previews()
         self.assertEqual(processed_again, 0)
@@ -164,21 +169,20 @@ class LivePreviewPipelineTest(unittest.TestCase):
         )
         self.assertIn("recordings/bean_x/REC_001.wav", state)
 
-    def test_authoritative_job_takes_over_and_cleans_segments(self) -> None:
+    def test_authoritative_recording_takes_over_and_cleans_segments(self) -> None:
         scanner = self._scanner()
         scanner.process_live_previews()
         base_object = "recordings/bean_x/REC_001.wav"
         from app.storage.contract import RecordingObject as RecObject
 
-        self.repository.discover(
-            [
-                RecObject(
-                    object_name=base_object,
-                    etag="full",
-                    size=100,
-                    last_modified=datetime.now(timezone.utc),
-                )
-            ]
+        # 完整录音出现在存储中（权威链路接管的信号）
+        self.store.recordings.append(
+            RecObject(
+                object_name=base_object,
+                etag="full",
+                size=100,
+                last_modified=datetime.now(timezone.utc),
+            )
         )
         scanner.process_live_previews()
         self.assertEqual(

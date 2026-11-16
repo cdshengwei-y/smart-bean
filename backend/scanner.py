@@ -15,7 +15,6 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app.config import ScannerSettings  # noqa: E402
 from app.content_filter.profile import WorkProfileStore  # noqa: E402
 from app.database import JobRepository  # noqa: E402
-from app.obsidian_sync import ObsidianNoteSync  # noqa: E402
 from app.scanner import RecordingScanner  # noqa: E402
 from app.service import TranscriptionService  # noqa: E402
 from app.storage.loader import load_recording_store
@@ -25,11 +24,9 @@ from app.transcription.loader import load_transcriber  # noqa: E402
 
 def _build_scanner(settings: ScannerSettings, repository: JobRepository) -> RecordingScanner:
     store = InboxArchiveStore(settings, load_recording_store(settings))
-    obsidian_sync = (
-        ObsidianNoteSync(settings, store, repository)
-        if settings.obsidian_vault_path is not None
-        else None
-    )
+    # Obsidian 侧不直写 Vault：macOS TCC 会静默拒绝 launchd 服务访问
+    # ~/Documents，笔记进 Obsidian 由 Obsidian 插件（ai-recording-bean-sync，
+    # 每分钟增量拉取 /api/sync/notes）负责；手动场景可用 backend/obsidian_sync.py。
     return RecordingScanner(
         settings=settings,
         store=store,
@@ -40,7 +37,6 @@ def _build_scanner(settings: ScannerSettings, repository: JobRepository) -> Reco
         profile_store=WorkProfileStore(
             settings.database_path.with_name("work_profiles.json")
         ),
-        obsidian_sync=obsidian_sync,
     )
 
 

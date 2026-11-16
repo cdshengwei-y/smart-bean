@@ -35,8 +35,6 @@
         <string>2</string>
         <key>QWEN_ASR_CHUNK_WORKERS</key>
         <string>2</string>
-        <key>OBSIDIAN_VAULT_PATH</key>
-        <string>/Users/jh-05/Documents/Obsidian Vault</string>
         <key>TRANSCRIPTION_PROGRESS_NOTE_INTERVAL_SECONDS</key>
         <string>10</string>
     </dict>

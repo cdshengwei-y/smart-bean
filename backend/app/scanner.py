@@ -315,6 +315,7 @@ class RecordingScanner:
             return result.text
 
     def _upload_live_preview(self, base_object: str, entry: Dict[str, Any]) -> None:
+        """聚合文本写入直播预览任务行，笔记生成走现有 note 队列。"""
         parsed = self._parse_live_base(
             base_object.replace(self.settings.recordings_prefix, "", 1)
         )
@@ -324,46 +325,52 @@ class RecordingScanner:
         joined = "\n\n".join(text for text in texts if text).strip()
         if not joined:
             return
-        result = TranscriptionResult(
-            text=joined,
-            language=self.settings.transcription_language,
-            duration_seconds=None,
-            model_name="live-preview",
-            metadata={"partial": "true", "live": "true", "segments": str(len(texts))},
-        )
-        profile = self.profile_store.get(device_id) if self.profile_store else {}
-        request = TranscriptionRequest(
-            audio_path=Path(base_object),
-            source_object_name=base_object,
-            language=self.settings.transcription_language,
-            metadata={"device_id": device_id},
-        )
-        markdown = self.transcription_service.pending_markdown(
-            request,
-            result,
-            profile,
-            ai_status="waiting",
-            transcription_status="partial",
+        stem = Path(base_object).stem
+        preview_object = "%s%s/live/%s/%s.wav" % (
+            self.settings.recordings_prefix,
+            device_id,
+            stem,
+            stem,
         )
         note_object = self.store.note_object_name(base_object)
-        self.store.upload_note(note_object, markdown)
-        synced = self.obsidian_sync.sync_once() if self.obsidian_sync is not None else 0
+        job_id = self.repository.upsert_live_preview_job(
+            preview_object, device_id, note_object
+        )
+        self.repository.save_transcript(
+            job_id,
+            joined,
+            note_object,
+            self.settings.transcription_language,
+            "live-preview",
+            None,
+            0.0,
+            0.0,
+            "live-preview",
+        )
         print(
-            "LIVE_PREVIEW %s segments=%d synced=%d"
-            % (base_object, len(texts), synced),
+            "LIVE_PREVIEW %s segments=%d" % (base_object, len(texts)),
             flush=True,
         )
 
     def process_live_previews(self) -> int:
-        """直播预览：逐段转写分段副本，聚合后流式刷新同一篇笔记。
+        """直播预览：逐段转写分段副本，聚合后经 note 队列流式刷新同一篇笔记。
 
-        完整录音一旦被权威链路建任务接管，预览即停止并清理分段对象。
+        完整录音上传到存储后由权威链路接管：清空分段对象，
+        聚合行随后被插件列表的遮蔽规则自然让位。
         """
         try:
             segments = self.store.list_live_segments()
         except Exception as exc:
             print("LIVE_LIST_FAIL %s" % exc, flush=True)
             return 0
+        authoritative_objects: set[str] = set()
+        if segments:
+            try:
+                authoritative_objects = {
+                    item.object_name for item in self.store.list_recordings()
+                }
+            except Exception as exc:
+                print("LIVE_AUTH_LIST_FAIL %s" % exc, flush=True)
         bases: Dict[str, List[Any]] = {}
         for item in segments:
             parsed = self._parse_live_base(item.object_name)
@@ -379,14 +386,13 @@ class RecordingScanner:
                 parsed = self._parse_live_base(items[0].object_name)
                 device_id = parsed[1] if parsed else ""
                 entry = {"device_id": device_id, "segments": {}}
-            if self.repository.has_job_for_object(base_object):
-                # 权威链路（完整录音）已接管：清空预览状态并删除分段对象。
-                if entry.get("segments"):
-                    for item in items:
-                        try:
-                            self.store.delete_recording(item.object_name)
-                        except Exception as exc:
-                            print("LIVE_CLEANUP_FAIL %s: %s" % (item.object_name, exc), flush=True)
+            if base_object in authoritative_objects:
+                # 权威链路（完整录音）已接管：清空分段对象与预览状态。
+                for item in items:
+                    try:
+                        self.store.delete_recording(item.object_name)
+                    except Exception as exc:
+                        print("LIVE_CLEANUP_FAIL %s: %s" % (item.object_name, exc), flush=True)
                 if state.get(base_object) is not None:
                     state.pop(base_object, None)
                     self._save_live_state(state)
