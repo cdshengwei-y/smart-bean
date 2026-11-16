@@ -1,0 +1,6 @@
+release/*
+!release/.gitkeep
+logs/*
+!logs/.gitkeep
+__pycache__/
+*.pyc

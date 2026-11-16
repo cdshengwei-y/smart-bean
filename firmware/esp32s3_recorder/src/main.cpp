@@ -199,6 +199,13 @@ constexpr char kRecordingTempSuffix[] = ".part";
 // backend 逐段转写并把文字流进 Obsidian（完整录音仍走原有链路）。
 constexpr uint32_t kSegmentSeconds = RECORDER_SEGMENT_SECONDS;
 constexpr char kSegmentMarker[] = "__s";
+
+#ifndef RECORDER_LIVE_UPLOAD
+#define RECORDER_LIVE_UPLOAD 1
+#endif
+// 边录边传总开关：录音中持续上传已完结的分段副本。
+// 若实测 WiFi 射频干扰麦克风音质，编译时置 0 可整体回退。
+constexpr bool kLiveUploadEnabled = RECORDER_LIVE_UPLOAD != 0;
 constexpr char kUploadStateSuffix[] = ".upload";
 constexpr char kUploadStateTempSuffix[] = ".upload.tmp";
 constexpr char kSleepMarkerPath[] = "/recordings/.last_sleep";
@@ -212,6 +219,15 @@ WiFiClient mqttNetworkClient;
 PubSubClient mqttClient(mqttNetworkClient);
 SPIClass sdSpi(FSPI);
 SemaphoreHandle_t fileMutex;
+
+// 递归锁：SD 卡互斥。上传路径需要在网络传输期间放锁、按小块重新取锁，
+// 而部分调用方（audioTask/stopRecording）持锁调用内部再取锁，故用递归互斥。
+static inline void sdLock() {
+  xSemaphoreTakeRecursive(fileMutex, portMAX_DELAY);
+}
+static inline void sdUnlock() {
+  xSemaphoreGiveRecursive(fileMutex);
+}
 TaskHandle_t audioTaskHandle;
 TaskHandle_t otaTaskHandle = nullptr;
 BLECharacteristic *bleControlCharacteristic = nullptr;
@@ -1269,7 +1285,7 @@ void clearUploadMarkers() {
   if (!sdReady) {
     return;
   }
-  xSemaphoreTake(fileMutex, portMAX_DELAY);
+  sdLock();
   File directory = SD.open(kRecordingsDir);
   if (directory) {
     File entry;
@@ -1287,7 +1303,7 @@ void clearUploadMarkers() {
     }
     directory.close();
   }
-  xSemaphoreGive(fileMutex);
+  sdUnlock();
 }
 
 struct UploadResumeState {
@@ -1298,11 +1314,13 @@ struct UploadResumeState {
 };
 
 bool saveUploadResumeState(const String &name, const UploadResumeState &state) {
+  sdLock();
   const String temporaryPath = uploadStateTempPath(name);
   const String finalPath = uploadStatePath(name);
   SD.remove(temporaryPath);
   File file = SD.open(temporaryPath, FILE_WRITE);
   if (!file) {
+    sdUnlock();
     return false;
   }
   file.println("version=1");
@@ -1316,6 +1334,7 @@ bool saveUploadResumeState(const String &name, const UploadResumeState &state) {
     if (next < 0) {
       file.close();
       SD.remove(temporaryPath);
+      sdUnlock();
       return false;
     }
     const int etagStart = state.completedParts.indexOf("<ETag>", cursor);
@@ -1323,6 +1342,7 @@ bool saveUploadResumeState(const String &name, const UploadResumeState &state) {
     if (etagEnd < 0) {
       file.close();
       SD.remove(temporaryPath);
+      sdUnlock();
       return false;
     }
     file.println("etag=" + state.completedParts.substring(etagStart + 6, etagEnd));
@@ -1335,12 +1355,16 @@ bool saveUploadResumeState(const String &name, const UploadResumeState &state) {
   // power loss from corrupting the actual WAV. Losing this checkpoint merely
   // causes a safe re-upload instead of data loss.
   SD.remove(finalPath);
-  return SD.rename(temporaryPath, finalPath);
+  const bool renamed = SD.rename(temporaryPath, finalPath);
+  sdUnlock();
+  return renamed;
 }
 
 bool loadUploadResumeState(const String &name, uint32_t expectedFileSize, UploadResumeState &state) {
+  sdLock();
   File file = SD.open(uploadStatePath(name), FILE_READ);
   if (!file) {
+    sdUnlock();
     return false;
   }
   int declaredParts = -1;
@@ -1357,6 +1381,7 @@ bool loadUploadResumeState(const String &name, uint32_t expectedFileSize, Upload
       const String etag = line.substring(5);
       if (etag.isEmpty()) {
         file.close();
+        sdUnlock();
         return false;
       }
       ++state.completedPartCount;
@@ -1365,14 +1390,17 @@ bool loadUploadResumeState(const String &name, uint32_t expectedFileSize, Upload
     }
   }
   file.close();
+  sdUnlock();
   const uint32_t expectedParts = (expectedFileSize + kMultipartPartBytes - 1) / kMultipartPartBytes;
   return state.fileSize == expectedFileSize && !state.uploadId.isEmpty() && declaredParts >= 0 &&
       state.completedPartCount == static_cast<uint16_t>(declaredParts) && state.completedPartCount <= expectedParts;
 }
 
 void clearUploadResumeState(const String &name) {
+  sdLock();
   SD.remove(uploadStateTempPath(name));
   SD.remove(uploadStatePath(name));
+  sdUnlock();
 }
 
 bool hasWavHeader(const WavHeader &header) {
@@ -1448,7 +1476,7 @@ void recoverInterruptedRecordings() {
   directory.close();
 }
 
-String findNextPendingRecording() {
+String findNextPendingRecording(bool segmentsOnly = false) {
   File directory = SD.open(kRecordingsDir);
   if (!directory) {
     return "";
@@ -1463,7 +1491,8 @@ String findNextPendingRecording() {
     const String name = slash >= 0 ? fullPath.substring(slash + 1) : fullPath;
     const bool pending = !entry.isDirectory() && name.endsWith(".wav") &&
                          name != currentFileName && !isUploaded(name) &&
-                         !isUploadFailed(name);
+                         !isUploadFailed(name) &&
+                         (!segmentsOnly || isSegmentFileName(name));
     if (pending) {
       if (isSegmentFileName(name)) {
         if (segmentCandidate.isEmpty()) {
@@ -1483,20 +1512,25 @@ String findNextPendingRecording() {
 }
 
 bool markUploaded(const String &name) {
+  sdLock();
   File marker = SD.open(uploadedMarkerPath(name), FILE_WRITE);
   if (!marker) {
+    sdUnlock();
     return false;
   }
   marker.print(isoTimestamp());
   marker.println();
   marker.flush();
   marker.close();
+  sdUnlock();
   return true;
 }
 
 bool markUploadFailed(const String &name, const String &reason) {
+  sdLock();
   File marker = SD.open(uploadFailedMarkerPath(name), FILE_WRITE);
   if (!marker) {
+    sdUnlock();
     return false;
   }
   marker.print(isoTimestamp());
@@ -1504,6 +1538,7 @@ bool markUploadFailed(const String &name, const String &reason) {
   marker.println(reason);
   marker.flush();
   marker.close();
+  sdUnlock();
   return true;
 }
 
@@ -1767,6 +1802,47 @@ bool finalizeSegmentFile() {
   return true;
 }
 
+// 上传用文件读取适配器：每次 seek/read 都短暂持有 SD 锁，
+// 让网络传输期间录音任务可以继续写卡（Stage B 边录边传的核心）。
+class UploadFileReader {
+ public:
+  UploadFileReader() = default;
+
+  bool open(const String &path) {
+    sdLock();
+    file_ = SD.open(path, FILE_READ);
+    const bool ok = static_cast<bool>(file_);
+    sdUnlock();
+    return ok;
+  }
+  operator bool() const { return static_cast<bool>(file_); }
+  size_t size() {
+    sdLock();
+    const size_t value = file_.size();
+    sdUnlock();
+    return value;
+  }
+  void seek(size_t offset) {
+    sdLock();
+    file_.seek(offset);
+    sdUnlock();
+  }
+  size_t read(uint8_t *buffer, size_t length) {
+    sdLock();
+    const size_t count = file_.read(buffer, length);
+    sdUnlock();
+    return count;
+  }
+  void close() {
+    sdLock();
+    file_.close();
+    sdUnlock();
+  }
+
+ private:
+  File file_;
+};
+
 bool finalizeRecordingFile() {
   if (!recordingFile) {
     return false;
@@ -1841,7 +1917,7 @@ bool startRecording() {
   if (recording) {
     return true;
   }
-  xSemaphoreTake(fileMutex, portMAX_DELAY);
+  sdLock();
   const bool opened = openNextRecordingFile();
   recording = opened;
   if (opened) {
@@ -1856,7 +1932,7 @@ bool startRecording() {
     lastRecordingErrorCode = "TF_CARD_WRITE_FAILED";
     Serial.println("RECORD_BEGIN_FAILED");
   }
-  xSemaphoreGive(fileMutex);
+  sdUnlock();
   return opened;
 }
 
@@ -1866,7 +1942,7 @@ bool stopRecording() {
     return true;
   }
   recording = false;
-  xSemaphoreTake(fileMutex, portMAX_DELAY);
+  sdLock();
   const String finishedFileName = currentFileName;
   const bool finished = finalizeRecordingFile();
   finalizeSegmentFile();
@@ -1877,7 +1953,7 @@ bool stopRecording() {
     lastRecordingErrorCode = "RECORDING_FINALIZE_FAILED";
   }
   Serial.printf("RECORD_END %s %s\n", finishedFileName.c_str(), finished ? "OK" : "FAILED");
-  xSemaphoreGive(fileMutex);
+  sdUnlock();
   if (finished) {
     uploadScanRequested = true;
   }
@@ -2078,15 +2154,24 @@ void publishBleFileList(uint16_t cursor) {
     publishBleFileError("list", "", "TF card is unavailable");
     return;
   }
+  // 扫描 SD 时持锁，发送 BLE 通知时放锁（notify 内含 delay，不能锁着卡等）。
+  struct ListedFile {
+    String name;
+    size_t size;
+    time_t lastWrite;
+  };
+  ListedFile page[kBleFilesPageSize + 1];
+  uint16_t pageLength = 0;
+  bool more = false;
+  sdLock();
   File directory = SD.open(kRecordingsDir);
   if (!directory) {
+    sdUnlock();
     publishBleFileError("list", "", "Unable to read recordings directory");
     return;
   }
 
   uint16_t index = 0;
-  uint16_t sent = 0;
-  bool more = false;
   File entry;
   while ((entry = directory.openNextFile())) {
     const String fullPath = entry.name();
@@ -2096,20 +2181,15 @@ void publishBleFileList(uint16_t cursor) {
                           !isSegmentFileName(name) &&
                           (!recording || name != currentFileName);
     if (sendable && index >= cursor) {
-      if (sent >= kBleFilesPageSize) {
+      if (pageLength >= kBleFilesPageSize) {
         more = true;
         entry.close();
         break;
       }
-      StaticJsonDocument<256> document;
-      document["t"] = "file";
-      document["n"] = name;
-      const size_t size = entry.size();
-      document["s"] = size;
-      document["d"] = size > sizeof(WavHeader) ? (size - sizeof(WavHeader)) / kBytesPerSecond : 0;
-      document["c"] = isoTimestamp(entry.getLastWrite());
-      publishBleFileEvent(document);
-      ++sent;
+      page[pageLength].name = name;
+      page[pageLength].size = entry.size();
+      page[pageLength].lastWrite = entry.getLastWrite();
+      ++pageLength;
     }
     if (sendable) {
       ++index;
@@ -2117,10 +2197,22 @@ void publishBleFileList(uint16_t cursor) {
     entry.close();
   }
   directory.close();
+  sdUnlock();
+
+  for (uint16_t position = 0; position < pageLength; ++position) {
+    StaticJsonDocument<256> document;
+    document["t"] = "file";
+    document["n"] = page[position].name;
+    const size_t size = page[position].size;
+    document["s"] = size;
+    document["d"] = size > sizeof(WavHeader) ? (size - sizeof(WavHeader)) / kBytesPerSecond : 0;
+    document["c"] = isoTimestamp(page[position].lastWrite);
+    publishBleFileEvent(document);
+  }
 
   StaticJsonDocument<128> end;
   end["t"] = "end";
-  end["next"] = cursor + sent;
+  end["next"] = cursor + pageLength;
   end["more"] = more;
   publishBleFileEvent(end);
 }
@@ -2134,7 +2226,7 @@ void deleteBleFile(const String &name) {
     publishBleFileError("delete", name, "Recording is still active");
     return;
   }
-  xSemaphoreTake(fileMutex, portMAX_DELAY);
+  sdLock();
   const String path = recordingPath(name);
   const bool deleted = SD.exists(path) && SD.remove(path);
   if (deleted) {
@@ -2164,7 +2256,7 @@ void deleteBleFile(const String &name) {
       }
     }
   }
-  xSemaphoreGive(fileMutex);
+  sdUnlock();
   if (!deleted) {
     publishBleFileError("delete", name, "Unable to delete recording");
     return;
@@ -2554,7 +2646,7 @@ void audioTask(void *) {
     normalizePdmPcmByteOrder(buffer, bytesRead);
     applyMicDigitalGain(buffer, bytesRead);
 
-    xSemaphoreTake(fileMutex, portMAX_DELAY);
+    sdLock();
     if (recording && recordingFile) {
       const size_t written = recordingFile.write(buffer, bytesRead);
       if (written != bytesRead) {
@@ -2584,7 +2676,7 @@ void audioTask(void *) {
         }
       }
     }
-    xSemaphoreGive(fileMutex);
+    sdUnlock();
   }
 }
 
@@ -2690,7 +2782,8 @@ void retrySdMountIfNeeded() {
   }
 }
 
-bool sha256FileRange(File &file, size_t offset, size_t length, uint8_t output[32]) {
+template <typename FileLike>
+bool sha256FileRange(FileLike &file, size_t offset, size_t length, uint8_t output[32]) {
   uint8_t buffer[kHashBufferBytes];
   mbedtls_sha256_context context;
   mbedtls_sha256_init(&context);
@@ -2756,8 +2849,8 @@ bool beginMinioHttp(HTTPClient &http, WiFiClient &plainClient, WiFiClientSecure 
   return started;
 }
 
-template <typename ClientType>
-bool uploadPartWithClient(ClientType &client, File &file, size_t offset, size_t length,
+template <typename ClientType, typename FileLike>
+bool uploadPartWithClient(ClientType &client, FileLike &file, size_t offset, size_t length,
                           const String &path, const String &authorization,
                           const String &payloadHash, const char *timestamp, String &etag,
                           uint16_t port) {
@@ -2808,7 +2901,8 @@ bool uploadPartWithClient(ClientType &client, File &file, size_t offset, size_t 
   return !etag.isEmpty();
 }
 
-bool uploadPartWithProgress(File &file, size_t offset, size_t length, const String &path,
+template <typename FileLike>
+bool uploadPartWithProgress(FileLike &file, size_t offset, size_t length, const String &path,
                             const String &authorization, const String &payloadHash,
                             const char *timestamp, String &etag) {
   const bool tls = runtimeCloudStorage.endpoint.startsWith("https://");
@@ -2826,23 +2920,8 @@ bool uploadPartWithProgress(File &file, size_t offset, size_t length, const Stri
       timestamp, etag, 80);
 }
 
-bool uploadRecordingToMinio(const String &name) {
-  if (!cloudConfigured()) {
-    lastUploadError = "Cloud configuration is incomplete.";
-    return false;
-  }
-  if (!ensureClock()) {
-    lastUploadError = "Waiting for NTP clock synchronization.";
-    return false;
-  }
-
-  File file = SD.open(recordingPath(name), FILE_READ);
-  if (!file || file.size() <= sizeof(WavHeader)) {
-    lastUploadError = "Unable to open WAV for upload.";
-    file.close();
-    return false;
-  }
-
+template <typename FileLike>
+bool uploadRecordingToMinioWith(FileLike &file, const String &name) {
   const String objectKey = minioObjectKey(name);
   const String canonicalUri = usesVirtualHostStorage()
       ? "/" + objectKey
@@ -2960,6 +3039,26 @@ bool uploadRecordingToMinio(const String &name) {
   return true;
 }
 
+bool uploadRecordingToMinio(const String &name) {
+  if (!cloudConfigured()) {
+    lastUploadError = "Cloud configuration is incomplete.";
+    return false;
+  }
+  if (!ensureClock()) {
+    lastUploadError = "Waiting for NTP clock synchronization.";
+    return false;
+  }
+  // 每次小块读取都短暂持有 SD 锁，网络传输期间不持锁，
+  // 录音任务（audioTask）得以继续写卡（边录边传）。
+  UploadFileReader file;
+  if (!file.open(recordingPath(name)) || file.size() <= sizeof(WavHeader)) {
+    lastUploadError = "Unable to open WAV for upload.";
+    file.close();
+    return false;
+  }
+  return uploadRecordingToMinioWith(file, name);
+}
+
 void uploadTask(void *) {
   while (true) {
     if (cloudStorageChangedPending && !recording && !uploadInProgress) {
@@ -2983,10 +3082,12 @@ void uploadTask(void *) {
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
-    xSemaphoreTake(fileMutex, portMAX_DELAY);
-    const String pendingName = recording ? "" : findNextPendingRecording();
-    xSemaphoreGive(fileMutex);
-    if (pendingName.isEmpty()) {
+    sdLock();
+    const bool liveWhileRecording = kLiveUploadEnabled && recording;
+    const String pendingName = findNextPendingRecording(liveWhileRecording);
+    sdUnlock();
+    // 录音中只放行分段上传；完整录音照旧等录音结束再传。
+    if (pendingName.isEmpty() || (recording && !isSegmentFileName(pendingName))) {
       // BLE stays available; Wi-Fi is only needed while completed recordings await upload.
       uploadScanRequested = false;
       if (wifiAccessLeaseActive()) {
@@ -3002,14 +3103,13 @@ void uploadTask(void *) {
       continue;
     }
 
-    xSemaphoreTake(fileMutex, portMAX_DELAY);
-    if (recording) {
-      xSemaphoreGive(fileMutex);
-      continue;
-    }
-    const String pendingNameForUpload = findNextPendingRecording();
-    if (pendingNameForUpload.isEmpty()) {
-      xSemaphoreGive(fileMutex);
+    sdLock();
+    const String pendingNameForUpload = findNextPendingRecording(liveWhileRecording);
+    const bool stillAllowed =
+        !pendingNameForUpload.isEmpty() &&
+        (!recording || isSegmentFileName(pendingNameForUpload));
+    sdUnlock();
+    if (!stillAllowed) {
       continue;
     }
     uploadingFileName = pendingNameForUpload;
@@ -3033,7 +3133,6 @@ void uploadTask(void *) {
     uploadInProgress = false;
     uploadingFileName = "";
     bleStatusUpdatePending = true;
-    xSemaphoreGive(fileMutex);
     vTaskDelay(pdMS_TO_TICKS(uploaded || unreadableFile ? 250 : kUploadRetryIntervalMs));
   }
 }
@@ -3249,7 +3348,7 @@ void setup() {
   Serial.println("AI Recording Bean booting...");
   Serial.printf("Firmware: %s, device ID: %s\n", kFirmwareVersion, deviceId().c_str());
   Serial.printf("RESET_REASON %d\n", static_cast<int>(esp_reset_reason()));
-  fileMutex = xSemaphoreCreateMutex();
+  fileMutex = xSemaphoreCreateRecursiveMutex();
   if (fileMutex == nullptr) {
     Serial.println("ERROR: file mutex allocation failed.");
     while (true) {
