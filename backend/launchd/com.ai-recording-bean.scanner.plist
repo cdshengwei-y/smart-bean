@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ai-recording-bean.scanner</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/scanner.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>MINIO_CONFIG_PATH</key>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/minio_config.json</string>
+        <key>TRANSCRIPTION_DB_PATH</key>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/transcriptions.db</string>
+        <key>ASR_BASE_URL</key>
+        <string>http://192.168.0.153:10086</string>
+        <key>QWEN_ASR_BASE_URL</key>
+        <string>http://192.168.0.153:18005</string>
+        <key>QWEN_ASR_CHUNK_SECONDS</key>
+        <string>15</string>
+        <key>QWEN_ASR_CHUNK_RETRIES</key>
+        <string>5</string>
+        <key>QWEN_ASR_HEALTH_TIMEOUT_SECONDS</key>
+        <string>15</string>
+        <key>ASR_HEALTH_TIMEOUT_SECONDS</key>
+        <string>15</string>
+        <key>ASR_CHUNK_WORKERS</key>
+        <string>2</string>
+        <key>QWEN_ASR_CHUNK_WORKERS</key>
+        <string>2</string>
+        <key>OBSIDIAN_VAULT_PATH</key>
+        <string>/Users/jh-05/Documents/Obsidian Vault</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/scanner.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/scanner.stderr.log</string>
+</dict>
+</plist>
