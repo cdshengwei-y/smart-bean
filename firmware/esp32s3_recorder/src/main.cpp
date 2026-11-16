@@ -191,6 +191,14 @@ constexpr time_t kBeijingUtcOffsetSeconds = 8 * 60 * 60;
 constexpr char kUploadedMarkerSuffix[] = ".uploaded";
 constexpr char kUploadFailedMarkerSuffix[] = ".upload_failed";
 constexpr char kRecordingTempSuffix[] = ".part";
+
+#ifndef RECORDER_SEGMENT_SECONDS
+#define RECORDER_SEGMENT_SECONDS 60
+#endif
+// 直播预览分段长度：录音时同步写一份分段副本，停止后优先上传，
+// backend 逐段转写并把文字流进 Obsidian（完整录音仍走原有链路）。
+constexpr uint32_t kSegmentSeconds = RECORDER_SEGMENT_SECONDS;
+constexpr char kSegmentMarker[] = "__s";
 constexpr char kUploadStateSuffix[] = ".upload";
 constexpr char kUploadStateTempSuffix[] = ".upload.tmp";
 constexpr char kSleepMarkerPath[] = "/recordings/.last_sleep";
@@ -401,6 +409,25 @@ String recordingPath(const String &name) {
 
 String partialRecordingPath(const String &name) {
   return recordingPath(name) + kRecordingTempSuffix;
+}
+
+bool isSegmentFileName(const String &name) {
+  const int marker = name.indexOf(kSegmentMarker);
+  return marker > 0 && name.endsWith(".wav");
+}
+
+String segmentStem(const String &segmentName) {
+  const int marker = segmentName.indexOf(kSegmentMarker);
+  return marker > 0 ? segmentName.substring(0, marker) : segmentName;
+}
+
+String segmentFileName(const String &baseName, uint16_t index) {
+  const int dot = baseName.lastIndexOf('.');
+  const String stem = dot >= 0 ? baseName.substring(0, dot) : baseName;
+  char suffix[10];
+  snprintf(suffix, sizeof(suffix), "%s%02u.wav", kSegmentMarker,
+           static_cast<unsigned>(index));
+  return stem + suffix;
 }
 
 String uploadStatePath(const String &name) {
@@ -1214,6 +1241,11 @@ String bleDeviceName() {
 }
 
 String minioObjectKey(const String &name) {
+  if (isSegmentFileName(name)) {
+    // 直播预览分段走独立子路径，backend 的常规发现/任务队列不碰它们。
+    return runtimeCloudStorage.recordingsPrefix + deviceId() + "/live/" +
+        segmentStem(name) + "/" + name;
+  }
   return runtimeCloudStorage.recordingsPrefix + deviceId() + "/" + name;
 }
 
@@ -1421,22 +1453,33 @@ String findNextPendingRecording() {
   if (!directory) {
     return "";
   }
+  // 分段预览优先：小文件上传快，backend 逐段转写能让文字尽早流出。
+  String segmentCandidate;
   String candidate;
   File entry;
   while ((entry = directory.openNextFile())) {
     const String fullPath = entry.name();
     const int slash = fullPath.lastIndexOf('/');
     const String name = slash >= 0 ? fullPath.substring(slash + 1) : fullPath;
-    if (!entry.isDirectory() && name.endsWith(".wav") && name != currentFileName && !isUploaded(name) &&
-        !isUploadFailed(name)) {
-      candidate = name;
-      entry.close();
-      break;
+    const bool pending = !entry.isDirectory() && name.endsWith(".wav") &&
+                         name != currentFileName && !isUploaded(name) &&
+                         !isUploadFailed(name);
+    if (pending) {
+      if (isSegmentFileName(name)) {
+        if (segmentCandidate.isEmpty()) {
+          segmentCandidate = name;
+        }
+      } else if (candidate.isEmpty()) {
+        candidate = name;
+      }
     }
     entry.close();
+    if (!segmentCandidate.isEmpty() && !candidate.isEmpty()) {
+      break;
+    }
   }
   directory.close();
-  return candidate;
+  return segmentCandidate.isEmpty() ? candidate : segmentCandidate;
 }
 
 bool markUploaded(const String &name) {
@@ -1674,6 +1717,56 @@ void writeWavHeader(File &file, uint32_t dataSize) {
   file.write(reinterpret_cast<const uint8_t *>(&header), sizeof(header));
 }
 
+File segmentFile;
+String segmentPartPath;
+uint16_t segmentIndex = 0;
+uint32_t segmentStartedAt = 0;
+
+bool openNextSegmentFile() {
+  segmentPartPath = partialRecordingPath(segmentFileName(currentFileName, segmentIndex));
+  segmentFile = SD.open(segmentPartPath, FILE_WRITE);
+  if (!segmentFile) {
+    Serial.println("SEGMENT_OPEN_FAILED");
+    segmentPartPath = "";
+    return false;
+  }
+  writeWavHeader(segmentFile, 0);
+  segmentFile.flush();
+  segmentStartedAt = millis();
+  return true;
+}
+
+bool finalizeSegmentFile() {
+  if (!segmentFile) {
+    return false;
+  }
+  segmentFile.flush();
+  const size_t totalSize = segmentFile.size();
+  const uint32_t dataSize = totalSize > sizeof(WavHeader) ? totalSize - sizeof(WavHeader) : 0;
+  writeWavHeader(segmentFile, dataSize);
+  segmentFile.flush();
+  segmentFile.close();
+  segmentPartPath = "";
+  const String finalName = segmentFileName(currentFileName, segmentIndex);
+  const String finalPath = recordingPath(finalName);
+  SD.remove(finalPath);
+  if (!SD.rename(partialRecordingPath(finalName), finalPath)) {
+    Serial.printf("SEGMENT_RENAME_FAILED %s\n", finalName.c_str());
+    return false;
+  }
+  if (dataSize < kSampleRate * 2) {
+    // 不足 1 秒的尾巴没有转写价值，直接丢弃。
+    SD.remove(finalPath);
+    Serial.printf("SEGMENT_DROPPED %s bytes=%lu\n", finalName.c_str(),
+                  static_cast<unsigned long>(dataSize));
+    return true;
+  }
+  Serial.printf("SEGMENT_READY %s bytes=%lu\n", finalName.c_str(),
+                static_cast<unsigned long>(dataSize));
+  uploadScanRequested = true;
+  return true;
+}
+
 bool finalizeRecordingFile() {
   if (!recordingFile) {
     return false;
@@ -1753,6 +1846,11 @@ bool startRecording() {
   recording = opened;
   if (opened) {
     pcmByteSwapMode = -1;
+    segmentIndex = 1;
+    if (!openNextSegmentFile()) {
+      // 分段预览是可选增强：失败不影响正式录音。
+      Serial.println("SEGMENT_PREVIEW_DISABLED");
+    }
     Serial.printf("RECORD_BEGIN %s\n", currentFileName.c_str());
   } else {
     lastRecordingErrorCode = "TF_CARD_WRITE_FAILED";
@@ -1771,6 +1869,8 @@ bool stopRecording() {
   xSemaphoreTake(fileMutex, portMAX_DELAY);
   const String finishedFileName = currentFileName;
   const bool finished = finalizeRecordingFile();
+  finalizeSegmentFile();
+  segmentFile = File();
   lastCompletedFileName = finished ? finishedFileName : "";
   currentFileName = "";
   if (!finished) {
@@ -1993,6 +2093,7 @@ void publishBleFileList(uint16_t cursor) {
     const int slash = fullPath.lastIndexOf('/');
     const String name = slash >= 0 ? fullPath.substring(slash + 1) : fullPath;
     const bool sendable = !entry.isDirectory() && name.endsWith(".wav") &&
+                          !isSegmentFileName(name) &&
                           (!recording || name != currentFileName);
     if (sendable && index >= cursor) {
       if (sent >= kBleFilesPageSize) {
@@ -2039,6 +2140,29 @@ void deleteBleFile(const String &name) {
   if (deleted) {
     SD.remove(uploadedMarkerPath(name));
     SD.remove(uploadFailedMarkerPath(name));
+    if (!isSegmentFileName(name)) {
+      // 一并清理该录音的分段预览副本及其上传标记。
+      const int dot = name.lastIndexOf('.');
+      const String stem = dot >= 0 ? name.substring(0, dot) : name;
+      File directory = SD.open(kRecordingsDir);
+      if (directory) {
+        File entry;
+        while ((entry = directory.openNextFile())) {
+          const String fullPath = entry.name();
+          const int slash = fullPath.lastIndexOf('/');
+          const String entryName = slash >= 0 ? fullPath.substring(slash + 1) : fullPath;
+          const bool owned = entryName.startsWith(stem + kSegmentMarker) &&
+                             entryName.endsWith(".wav");
+          entry.close();
+          if (owned) {
+            SD.remove(recordingPath(entryName));
+            SD.remove(uploadedMarkerPath(entryName));
+            SD.remove(uploadFailedMarkerPath(entryName));
+          }
+        }
+        directory.close();
+      }
+    }
   }
   xSemaphoreGive(fileMutex);
   if (!deleted) {
@@ -2438,11 +2562,26 @@ void audioTask(void *) {
                       static_cast<unsigned>(written));
         lastRecordingErrorCode = "TF_CARD_WRITE_FAILED";
         recording = false;
-      } else if (millis() - lastRecordingFlushAt >= kRecordingFlushIntervalMs) {
-        // Bound the amount of audio at risk if the battery disappears without
-        // allowing the normal stop path to close the file.
-        recordingFile.flush();
-        lastRecordingFlushAt = millis();
+      } else {
+        if (millis() - lastRecordingFlushAt >= kRecordingFlushIntervalMs) {
+          // Bound the amount of audio at risk if the battery disappears without
+          // allowing the normal stop path to close the file.
+          recordingFile.flush();
+          lastRecordingFlushAt = millis();
+        }
+        if (segmentFile) {
+          segmentFile.write(buffer, bytesRead);
+          if (millis() - segmentStartedAt >= kSegmentSeconds * 1000UL) {
+            // 满 60 秒：切出一段已完结的分段副本，继续录下一段。
+            finalizeSegmentFile();
+            if (recording) {
+              segmentIndex += 1;
+              if (!openNextSegmentFile()) {
+                Serial.println("SEGMENT_PREVIEW_DISABLED");
+              }
+            }
+          }
+        }
       }
     }
     xSemaphoreGive(fileMutex);

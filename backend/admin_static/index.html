@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>录音豆管理中心</title>
+  <link rel="stylesheet" href="/admin/static/styles.css">
+</head>
+<body>
+  <main class="page">
+    <section id="login-view" class="login-view">
+      <div class="login-brand">
+        <div class="login-mark">ARB</div>
+        <span>AI Recording Bean</span>
+      </div>
+      <p class="eyebrow">OPERATOR CONSOLE</p>
+      <h1>进入管理中心</h1>
+      <p class="muted">查看设备运行情况，管理同步授权和客户账户。</p>
+      <form id="login-form" class="login-form">
+        <label for="admin-password">管理员密码</label>
+        <input id="admin-password" type="password" autocomplete="current-password" required>
+        <button class="primary login-button" type="submit">登录管理中心</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="admin-view" class="admin-view hidden">
+      <div class="app-frame">
+        <aside class="sidebar">
+          <div class="sidebar-brand">
+            <div class="brand-mark">ARB</div>
+            <div>
+              <strong>录音豆</strong>
+              <span>管理中心</span>
+            </div>
+          </div>
+          <div class="sidebar-rule"></div>
+          <p class="nav-label">工作台</p>
+          <nav class="main-nav" aria-label="管理中心导航">
+            <button class="nav-item active" data-view="overview" type="button">
+              <span class="nav-marker">01</span>
+              <span>总览</span>
+            </button>
+            <button class="nav-item" data-view="devices" type="button">
+              <span class="nav-marker">02</span>
+              <span>设备与用户</span>
+            </button>
+            <button class="nav-item" data-view="access" type="button">
+              <span class="nav-marker">03</span>
+              <span>授权管理</span>
+            </button>
+            <button class="nav-item" data-view="models" type="button">
+              <span class="nav-marker">04</span>
+              <span>模型回放</span>
+            </button>
+          </nav>
+          <div class="sidebar-footer">
+            <span class="sidebar-status-dot"></span>
+            <div>
+              <strong>服务在线</strong>
+              <span id="sidebar-endpoint">当前服务</span>
+            </div>
+          </div>
+        </aside>
+
+        <div class="workspace">
+          <header class="workspace-header">
+            <div>
+              <p class="eyebrow">OPERATOR CONSOLE</p>
+              <h1 id="view-title">运营总览</h1>
+              <p id="view-subtitle" class="view-subtitle">快速了解账户、设备和转写任务的当前状态。</p>
+            </div>
+            <div class="header-actions">
+              <span id="last-refresh" class="last-refresh">等待同步</span>
+              <button id="refresh-button" class="secondary" type="button">刷新数据</button>
+              <button id="logout-button" class="ghost-light" type="button">退出</button>
+            </div>
+          </header>
+
+          <section id="overview-view" class="view-panel">
+            <div class="summary-grid">
+              <div class="metric">
+                <span class="metric-label">客户账户</span>
+                <strong id="metric-users">0</strong>
+                <small>已注册账户</small>
+              </div>
+              <div class="metric metric-positive">
+                <span class="metric-label">绑定设备</span>
+                <strong id="metric-devices">0</strong>
+                <small>已建立归属关系</small>
+              </div>
+              <div class="metric metric-positive">
+                <span class="metric-label">同步端</span>
+                <strong id="metric-sync-clients">0</strong>
+                <small>当前有效连接</small>
+              </div>
+              <div class="metric metric-warn">
+                <span class="metric-label">待处理任务</span>
+                <strong id="metric-in-progress">0</strong>
+                <small>正在转写或 AI 处理</small>
+              </div>
+              <div class="metric metric-danger">
+                <span class="metric-label">异常任务</span>
+                <strong id="metric-failed">0</strong>
+                <small>需要关注或重试</small>
+              </div>
+            </div>
+
+            <div class="dashboard-grid">
+              <section class="panel attention-panel">
+                <div class="panel-heading">
+                  <div>
+                    <span class="panel-kicker">ATTENTION</span>
+                    <h2>需要关注</h2>
+                  </div>
+                  <span id="attention-count" class="panel-count">0</span>
+                </div>
+                <div id="attention-list" class="attention-list"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <span class="panel-kicker">ASR SERVICE</span>
+                    <h2>语音转写服务</h2>
+                  </div>
+                  <span id="asr-selected" class="status status-neutral">未读取</span>
+                </div>
+                <div id="asr-list" class="asr-list"></div>
+              </section>
+            </div>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <span class="panel-kicker">RECENT JOBS</span>
+                  <h2>最近任务</h2>
+                </div>
+                <span id="recent-job-count" class="panel-count">0 条</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>录音</th>
+                      <th>设备</th>
+                      <th>状态</th>
+                      <th>更新时间</th>
+                      <th>同步</th>
+                      <th>信息</th>
+                    </tr>
+                  </thead>
+                  <tbody id="recent-jobs-table"></tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+
+          <section id="devices-view" class="view-panel hidden">
+            <div class="view-toolbar">
+              <div>
+                <span class="panel-kicker">DEVICES & USERS</span>
+                <h2>设备与用户</h2>
+              </div>
+              <label class="toolbar-search">
+                <span class="sr-only">搜索设备</span>
+                <input id="device-search" type="search" placeholder="搜索设备 ID 或邮箱">
+              </label>
+            </div>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <span class="panel-kicker">DEVICE HEALTH</span>
+                  <h2>设备运行情况</h2>
+                </div>
+                <span id="device-count" class="panel-count">0 台</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>设备 ID</th>
+                      <th>账户</th>
+                      <th>同步端</th>
+                      <th>任务</th>
+                      <th>异常</th>
+                      <th>最近活动</th>
+                      <th>状态</th>
+                    </tr>
+                  </thead>
+                  <tbody id="devices-table"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <span class="panel-kicker">CUSTOMER ACCOUNTS</span>
+                  <h2>客户账户</h2>
+                </div>
+                <span id="user-count" class="panel-count">0 个</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>邮箱</th>
+                      <th>设备</th>
+                      <th>绑定时间</th>
+                      <th>注册时间</th>
+                    </tr>
+                  </thead>
+                  <tbody id="users-table"></tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+
+          <section id="access-view" class="view-panel hidden">
+            <section class="panel register-panel">
+              <div class="panel-heading">
+                <div>
+                  <span class="panel-kicker">DEVICE REGISTRY</span>
+                  <h2>登记新设备</h2>
+                </div>
+                <span class="hint">登记后即可签发激活码</span>
+              </div>
+              <form id="register-device-form" class="register-form">
+                <label>
+                  新设备 ID
+                  <input id="new-device-id" name="device_id" placeholder="例如 bean_ye_3" required pattern="[A-Za-z0-9_-]+">
+                </label>
+                <label>
+                  设备备注
+                  <input id="new-device-label" name="label" placeholder="例如 第三台测试机">
+                </label>
+                <button class="secondary" type="submit">登记设备</button>
+              </form>
+            </section>
+
+            <section class="panel issue-panel">
+              <div class="panel-heading">
+                <div>
+                  <span class="panel-kicker">ISSUE ACCESS</span>
+                  <h2>签发新的激活码</h2>
+                </div>
+                <span class="hint">激活码只能使用一次</span>
+              </div>
+              <form id="issue-form" class="issue-form">
+                <label>
+                  设备 ID
+                  <select id="device-id" name="device_id" required>
+                    <option value="bean_ye_1">bean_ye_1</option>
+                    <option value="bean_ye_2">bean_ye_2</option>
+                  </select>
+                </label>
+                <label>
+                  客户备注
+                  <input id="label" name="label" placeholder="例如 客户 A 的 Mac">
+                </label>
+                <label class="expiration-field">
+                  <span>有效期</span>
+                  <span class="expiration-control">
+                    <input id="permanent" type="checkbox" checked>
+                    <span>永久有效</span>
+                  </span>
+                  <input id="expires-at" type="datetime-local" disabled>
+                </label>
+                <label class="replace-field">
+                  <span>同步端策略</span>
+                  <span class="expiration-control">
+                    <input id="replace-existing" type="checkbox">
+                    <span>激活后替换旧同步端</span>
+                  </span>
+                  <small>会让该设备已有同步端失效</small>
+                </label>
+                <button class="primary issue-button" type="submit">签发激活码</button>
+              </form>
+              <div id="issued-result" class="issued-result hidden" aria-live="polite">
+                <div class="issued-copy">
+                  <span class="result-label">新激活码已生成</span>
+                  <code id="issued-code"></code>
+                  <p id="issued-meta" class="muted"></p>
+                </div>
+                <button id="copy-code" class="secondary" type="button">复制激活码</button>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <span class="panel-kicker">AUTHORIZATION RECORDS</span>
+                  <h2>授权记录</h2>
+                </div>
+                <span class="hint">撤销操作会立即生效</span>
+              </div>
+              <div class="record-toolbar">
+                <label class="toolbar-search">
+                  <span class="sr-only">搜索授权记录</span>
+                  <input id="record-search" type="search" placeholder="搜索设备 ID 或备注">
+                </label>
+                <label class="filter-field">
+                  <span class="sr-only">筛选状态</span>
+                  <select id="status-filter">
+                    <option value="all">全部状态</option>
+                    <option value="active">有效</option>
+                    <option value="redeemed">已使用</option>
+                    <option value="revoked">已撤销</option>
+                    <option value="expired">已过期</option>
+                  </select>
+                </label>
+                <span id="record-count" class="panel-count">显示 0 条</span>
+              </div>
+              <div class="record-grid">
+                <div class="record-block">
+                  <div class="record-block-heading">
+                    <div>
+                      <span class="panel-kicker">ACTIVATION CODES</span>
+                      <h3>激活码</h3>
+                    </div>
+                    <span id="code-filter-count" class="panel-count">0 条</span>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>设备 ID</th>
+                          <th>备注</th>
+                          <th>状态</th>
+                          <th>有效期</th>
+                          <th>签发时间</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="codes-table"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="record-block">
+                  <div class="record-block-heading">
+                    <div>
+                      <span class="panel-kicker">SYNC TOKENS</span>
+                      <h3>同步令牌</h3>
+                    </div>
+                    <span id="token-filter-count" class="panel-count">0 条</span>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>设备 ID</th>
+                          <th>备注</th>
+                          <th>状态</th>
+                          <th>最后使用</th>
+                          <th>创建时间</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tokens-table"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </section>
+
+          <section id="models-view" class="view-panel hidden">
+            <div class="view-toolbar">
+              <div>
+                <span class="panel-kicker">TRANSCRIPTION HISTORY</span>
+                <h2>模型运行记录</h2>
+              </div>
+              <span id="run-count" class="panel-count">0 条</span>
+            </div>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <span class="panel-kicker">ASR REPLAY</span>
+                  <h2>历史模型回放</h2>
+                </div>
+                <span class="hint">回放只保存一份新结果，不会改动当前笔记</span>
+              </div>
+              <div class="table-wrap run-table-wrap">
+                <table class="run-table">
+                  <thead>
+                    <tr>
+                      <th>录音</th>
+                      <th>设备</th>
+                      <th>类型</th>
+                      <th>模型</th>
+                      <th>状态</th>
+                      <th>耗时</th>
+                      <th>完成时间</th>
+                      <th>结果预览</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="transcription-runs-table"></tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+
+          <p id="page-message" class="page-message" role="status"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="/admin/static/app.js"></script>
+</body>
+</html>

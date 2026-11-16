@@ -56,6 +56,13 @@ def archive_root(settings: ScannerSettings) -> Path:
     return Path(settings.database_path).parent / "recordings_archive"
 
 
+def is_live_segment_object(object_name: str, recordings_prefix: str = "recordings/") -> bool:
+    """是否为直播预览分段对象（recordings/<设备>/live/<录音>/<分段>.wav）。"""
+    rel = object_name.removeprefix(recordings_prefix)
+    parts = Path(rel).parts
+    return len(parts) >= 3 and parts[1] == "live"
+
+
 def archive_file_path(settings: ScannerSettings, object_key: str) -> Path:
     relative = Path(object_key)
     if relative.is_absolute() or ".." in relative.parts:
@@ -230,6 +237,10 @@ class InboxArchiveStore(RecordingStore):
         merged: Dict[str, RecordingObject] = {}
         try:
             for item in self._base.list_recordings():
+                if is_live_segment_object(
+                    item.object_name, self._settings.recordings_prefix
+                ):
+                    continue
                 merged[item.object_name] = item
         except Exception as exc:
             print("INBOX_CLOUD_LIST_FAIL %s" % exc, flush=True)
@@ -238,8 +249,12 @@ class InboxArchiveStore(RecordingStore):
             for path in root.rglob("*.wav"):
                 if ".staging" in path.parts:
                     continue
-                stat = path.stat()
                 object_name = path.relative_to(root).as_posix()
+                if is_live_segment_object(
+                    object_name, self._settings.recordings_prefix
+                ):
+                    continue
+                stat = path.stat()
                 merged[object_name] = RecordingObject(
                     object_name=object_name,
                     etag="%d-%d" % (stat.st_size, int(stat.st_mtime)),
@@ -255,6 +270,39 @@ class InboxArchiveStore(RecordingStore):
             shutil.copyfile(source, destination)
             return
         self._base.download_recording(object_name, destination)
+
+    def list_live_segments(self) -> List[RecordingObject]:
+        merged: Dict[str, RecordingObject] = {}
+        root = archive_root(self._settings)
+        if root.is_dir():
+            for path in root.rglob("*.wav"):
+                if ".staging" in path.parts:
+                    continue
+                object_name = path.relative_to(root).as_posix()
+                if not is_live_segment_object(
+                    object_name, self._settings.recordings_prefix
+                ):
+                    continue
+                stat = path.stat()
+                merged[object_name] = RecordingObject(
+                    object_name=object_name,
+                    etag="%d-%d" % (stat.st_size, int(stat.st_mtime)),
+                    size=stat.st_size,
+                    last_modified=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                )
+        lister = getattr(self._base, "list_live_segments", None)
+        if callable(lister):
+            for item in lister():
+                merged[item.object_name] = item
+        return list(merged.values())
+
+    def delete_recording(self, object_name: str) -> None:
+        source = archive_file_path(self._settings, object_name)
+        if source.is_file():
+            source.unlink()
+        deleter = getattr(self._base, "delete_recording", None)
+        if callable(deleter):
+            deleter(object_name)
 
     def note_object_name(self, recording_object_name: str) -> str:
         return self._base.note_object_name(recording_object_name)

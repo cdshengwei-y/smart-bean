@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ai-recording-bean.obsidian-sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/obsidian_sync.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>MINIO_CONFIG_PATH</key>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/minio_config.json</string>
+        <key>OBSIDIAN_VAULT_PATH</key>
+        <string>/Users/jh-05/Documents/Obsidian Vault</string>
+        <key>OBSIDIAN_SYNC_DB_PATH</key>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/obsidian_sync.db</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/obsidian-sync.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/obsidian-sync.stderr.log</string>
+</dict>
+</plist>

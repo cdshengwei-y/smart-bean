@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ai-recording-bean.status</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/status_server.py</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8787</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>TRANSCRIPTION_DB_PATH</key>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/transcriptions.db</string>
+        <key>MINIO_CONFIG_PATH</key>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/minio_config.json</string>
+        <key>ASR_BASE_URL</key>
+        <string>http://192.168.0.153:10086</string>
+        <key>QWEN_ASR_BASE_URL</key>
+        <string>http://192.168.0.153:18005</string>
+        <key>QWEN_ASR_HEALTH_TIMEOUT_SECONDS</key>
+        <string>15</string>
+        <key>ASR_HEALTH_TIMEOUT_SECONDS</key>
+        <string>15</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/status.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/status.stderr.log</string>
+</dict>
+</plist>

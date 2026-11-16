@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ai-recording-bean.ai-worker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ai_worker.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>MINIO_CONFIG_PATH</key>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/minio_config.json</string>
+        <key>TRANSCRIPTION_DB_PATH</key>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/transcriptions.db</string>
+        <key>WORK_FILTER_BASE_URL</key>
+        <string>https://sub2api.vx123.xin</string>
+        <key>WORK_FILTER_CHAT_PATH</key>
+        <string>/v1/chat/completions</string>
+        <key>WORK_FILTER_MODEL</key>
+        <string>deepseek-v4-flash</string>
+        <key>WORK_FILTER_API_KEY</key>
+        <string></string>
+        <key>WORK_FILTER_WORKERS</key>
+        <string>2</string>
+        <key>WORK_FILTER_RETRIES</key>
+        <string>5</string>
+        <key>WORK_FILTER_TIMEOUT_SECONDS</key>
+        <string>120</string>
+        <key>WORK_FILTER_FILTER_CHUNK_CHARS</key>
+        <string>600</string>
+        <key>WORK_FILTER_MAX_TOKENS</key>
+        <string>2048</string>
+        <key>WORK_FILTER_MAX_RETRY_TOKENS</key>
+        <string>8192</string>
+        <key>WORK_FILTER_RETRY_DELAY_SECONDS</key>
+        <string>2</string>
+        <key>WORK_FILTER_RATE_LIMIT_DELAY_SECONDS</key>
+        <string>5</string>
+        <key>AI_MAX_ATTEMPTS</key>
+        <string>50</string>
+        <key>AI_RETRY_DELAY_SECONDS</key>
+        <string>30</string>
+        <key>AI_FAILURE_COOLDOWN_SECONDS</key>
+        <string>900</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/ai-worker.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/ai-worker.stderr.log</string>
+</dict>
+</plist>
