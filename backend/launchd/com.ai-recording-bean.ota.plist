@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ai-recording-bean.ota</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota_server.py</string>
+        <string>--firmware</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/firmware-0.3.13-bean_ye_1-ota-acceptance.bin</string>
+        <string>--firmware-bean-ye-1</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/firmware-0.3.13-bean_ye_1-ota-acceptance.bin</string>
+        <string>--firmware-bean-ye-2</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/firmware-0.3.11-bean_ye_2.bin</string>
+        <string>--apk</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/AI-Recording-Bean-0.5.35.apk</string>
+        <string>--version</string>
+        <string>0.3.13</string>
+        <string>--app-version</string>
+        <string>0.5.35</string>
+        <string>--public-base-url</string>
+        <string>http://192.168.0.107:8790</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/ota.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/data/ota.stderr.log</string>
+</dict>
+</plist>
