@@ -9,15 +9,19 @@
         <string>/usr/bin/python3</string>
         <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota_server.py</string>
         <string>--firmware</string>
-        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/firmware-0.3.13-bean_ye_1-ota-acceptance.bin</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/firmware-0.3.14-bean_ye_1-live-segments.bin</string>
         <string>--firmware-bean-ye-1</string>
-        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/firmware-0.3.13-bean_ye_1-ota-acceptance.bin</string>
+        <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/firmware-0.3.14-bean_ye_1-live-segments.bin</string>
+        <string>--version-bean-ye-1</string>
+        <string>0.3.14</string>
         <string>--firmware-bean-ye-2</string>
         <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/firmware-0.3.11-bean_ye_2.bin</string>
+        <string>--version-bean-ye-2</string>
+        <string>0.3.11</string>
         <string>--apk</string>
         <string>/Users/jh-05/Library/Application Support/AI Recording Bean Backend/ota/AI-Recording-Bean-0.5.35.apk</string>
         <string>--version</string>
-        <string>0.3.13</string>
+        <string>0.3.14</string>
         <string>--app-version</string>
         <string>0.5.35</string>
         <string>--public-base-url</string>

@@ -21,7 +21,7 @@ class OtaHandler(BaseHTTPRequestHandler):
     version: str
     app_version: str = ""
     firmware_url: str
-    device_firmwares: dict[str, tuple[Path, str]] = {}
+    device_firmwares: dict[str, tuple[Path, str, str]] = {}
     apk_url: str = ""
     ios_app_url: str = ""
 
@@ -39,8 +39,8 @@ class OtaHandler(BaseHTTPRequestHandler):
             if item is None:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown device"})
             else:
-                _, url = item
-                self._send_json(HTTPStatus.OK, {"version": self.version, "url": url})
+                _, url, device_version = item
+                self._send_json(HTTPStatus.OK, {"version": device_version, "url": url})
             return
         if request_path == "/release.json":
             self._send_json(
@@ -52,14 +52,16 @@ class OtaHandler(BaseHTTPRequestHandler):
                         "version": self.app_version,
                         "url": self.apk_url,
                         "ios_url": self.ios_app_url,
-                    },
+                    }
+                    if self.apk_url or self.ios_app_url
+                    else None,
                 },
             )
             return
         if request_path == urlparse(self.firmware_url).path:
             self._send_firmware()
             return
-        for path, url in self.device_firmwares.values():
+        for path, url, _ in self.device_firmwares.values():
             if request_path == urlparse(url).path:
                 self._send_file(path, "application/octet-stream")
                 return
@@ -105,6 +107,8 @@ def main() -> int:
     parser.add_argument("--firmware", required=True, type=Path)
     parser.add_argument("--firmware-bean-ye-1", type=Path)
     parser.add_argument("--firmware-bean-ye-2", type=Path)
+    parser.add_argument("--version-bean-ye-1", default="", help="Per-device firmware version; defaults to --version")
+    parser.add_argument("--version-bean-ye-2", default="", help="Per-device firmware version; defaults to --version")
     parser.add_argument("--apk", type=Path, help="Optional Android APK paired with this release")
     parser.add_argument(
         "--ios-app-url",
@@ -122,14 +126,22 @@ def main() -> int:
     if not firmware_path.is_file():
         parser.error("firmware file does not exist: %s" % firmware_path)
     base_url = args.public_base_url.rstrip("/")
-    device_firmwares: dict[str, tuple[Path, str]] = {}
-    for device_id, candidate in (("bean_ye_1", args.firmware_bean_ye_1), ("bean_ye_2", args.firmware_bean_ye_2)):
+    device_firmwares: dict[str, tuple[Path, str, str]] = {}
+    for device_id, candidate, per_device_version in (
+        ("bean_ye_1", args.firmware_bean_ye_1, args.version_bean_ye_1),
+        ("bean_ye_2", args.firmware_bean_ye_2, args.version_bean_ye_2),
+    ):
         if candidate is None:
             continue
         path = candidate.expanduser().resolve()
         if not path.is_file():
             parser.error("firmware file does not exist: %s" % path)
-        device_firmwares[device_id] = (path, "%s/firmware/%s/%s.bin" % (base_url, args.version, device_id))
+        version = per_device_version or args.version
+        device_firmwares[device_id] = (
+            path,
+            "%s/firmware/%s/%s.bin" % (base_url, version, device_id),
+            version,
+        )
     apk_path = args.apk.expanduser().resolve() if args.apk else None
     if apk_path is not None and not apk_path.is_file():
         parser.error("APK file does not exist: %s" % apk_path)
