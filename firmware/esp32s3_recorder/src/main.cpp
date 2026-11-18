@@ -219,11 +219,27 @@ constexpr size_t kLiveRingBytes = 96 * 1024;  // ~3 秒 16k s16le PCM
 
 // 直播 PCM 环形缓冲：audioTask 生产（写卡同时写入），uploadTask 消费
 // （网络推送）。满时丢最老数据——直播优先新鲜度。
-static uint8_t liveRing[kLiveRingBytes];
+// 内存放在 PSRAM：160KB 静态缓冲会挤爆内部 heap，导致蓝牙 GATT 连接
+// 因内存不足失败（APP 能搜到设备但永远连不上——2026-11-18 实测教训）。
+#include "esp_heap_caps.h"
+
+static uint8_t *liveRing = nullptr;      // PSRAM
+static uint8_t *livePushBuffer = nullptr; // PSRAM
 static volatile size_t liveRingHead = 0;  // 写位置
 static volatile size_t liveRingTail = 0;  // 读位置
 static volatile bool liveRingOverflow = false;
+static bool liveStreamRuntimeReady = false;
 SemaphoreHandle_t liveRingMutex;
+constexpr size_t kLivePushBytes = 64 * 1024;
+// 内部 RAM 暂存：写卡锁内只做内部 RAM 拷贝，攒批后（锁外）再进 PSRAM——
+// 高频 PSRAM 访问与 SD 写卡同临界区时，实测 SD SPI 写入半途失败
+// （RECORD_WRITE_FAILED expected=1024 actual=468）。
+static uint8_t liveStagingBuffer[8192];
+static size_t liveStagingUsed = 0;
+
+static inline bool liveStreamReady() {
+  return liveStreamRuntimeReady;
+}
 
 static inline void liveRingLock() {
   xSemaphoreTakeRecursive(liveRingMutex, portMAX_DELAY);
@@ -237,7 +253,7 @@ static size_t liveRingAvailable() {
 }
 
 static void liveRingPush(const uint8_t *data, size_t length) {
-  if (!liveRingMutex) return;
+  if (!liveRingMutex || !liveRing || !liveStreamRuntimeReady) return;
   liveRingLock();
   for (size_t index = 0; index < length; ++index) {
     liveRing[liveRingHead] = data[index];
@@ -251,7 +267,7 @@ static void liveRingPush(const uint8_t *data, size_t length) {
 }
 
 static size_t liveRingTake(uint8_t *out, size_t capacity) {
-  if (!liveRingMutex) return 0;
+  if (!liveRingMutex || !liveRing || !liveStreamRuntimeReady) return 0;
   liveRingLock();
   size_t available = liveRingAvailable();
   size_t count = available < capacity ? available : capacity;
@@ -2712,8 +2728,13 @@ void audioTask(void *) {
         lastRecordingErrorCode = "TF_CARD_WRITE_FAILED";
         recording = false;
       } else {
-        if (kLiveStreamEnabled) {
-          liveRingPush(buffer, bytesRead);
+        // 写卡锁内只拷内部 RAM（快、不碰 PSRAM 总线）；攒批后锁外进 PSRAM
+        if (liveStreamReady() &&
+            liveStagingUsed + bytesRead <= sizeof(liveStagingBuffer)) {
+          memcpy(liveStagingBuffer + liveStagingUsed, buffer, bytesRead);
+          liveStagingUsed += bytesRead;
+        } else if (liveStreamReady()) {
+          liveStagingUsed = 0;  // 暂存满：丢弃本批（写卡优先，0.25s 音频代价）
         }
         if (millis() - lastRecordingFlushAt >= kRecordingFlushIntervalMs) {
           // Bound the amount of audio at risk if the battery disappears without
@@ -2737,6 +2758,11 @@ void audioTask(void *) {
       }
     }
     sdUnlock();
+    // 锁外攒批：4KB 一批进 PSRAM ring，PSRAM 访问不与 SD 写卡同临界区
+    if (liveStreamReady() && liveStagingUsed >= 4096) {
+      liveRingPush(liveStagingBuffer, liveStagingUsed);
+      liveStagingUsed = 0;
+    }
   }
 }
 
@@ -3119,10 +3145,9 @@ bool uploadRecordingToMinio(const String &name) {
   return uploadRecordingToMinioWith(file, name);
 }
 
-static uint8_t livePushBuffer[64 * 1024];
-
 bool pushLivePcmChunk(const String &device, const String &stem) {
-  const size_t length = liveRingTake(livePushBuffer, sizeof(livePushBuffer));
+  if (!livePushBuffer) return true;
+  const size_t length = liveRingTake(livePushBuffer, kLivePushBytes);
   if (length == 0) {
     return true;
   }
@@ -3146,7 +3171,12 @@ bool pushLivePcmChunk(const String &device, const String &stem) {
       "Content-Length: %u\r\nConnection: close\r\n\r\n",
       path.c_str(), device.c_str(), stem.c_str(), authority.c_str(),
       static_cast<unsigned>(length));
-  plainClient.write(livePushBuffer, length);
+  // 8KB 子块发送 + 块间让步：64KB 连续 PSRAM 读会压总线，干扰 SD 写卡
+  for (size_t offset = 0; offset < length; offset += 8192) {
+    const size_t chunk = (length - offset) < 8192 ? (length - offset) : 8192;
+    plainClient.write(livePushBuffer + offset, chunk);
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
   plainClient.flush();
   String statusLine = plainClient.readStringUntil('\n');
   const bool ok = statusLine.indexOf(" 200") > 0;
@@ -3172,7 +3202,7 @@ void uploadTask(void *) {
       continue;
     }
     const bool liveStreamActive =
-        kLiveStreamEnabled && recording && currentFileName.length() > 0;
+        liveStreamReady() && recording && currentFileName.length() > 0;
     const bool livePending =
         liveStreamActive && liveRingAvailable() > 0 &&
         millis() - lastLivePushAt >= kLivePcmPushIntervalMs;
@@ -3481,6 +3511,19 @@ void setup() {
   Serial.printf("RESET_REASON %d\n", static_cast<int>(esp_reset_reason()));
   fileMutex = xSemaphoreCreateRecursiveMutex();
   liveRingMutex = xSemaphoreCreateRecursiveMutex();
+  if (kLiveStreamEnabled && psramFound()) {
+    liveRing = (uint8_t *)heap_caps_malloc(kLiveRingBytes, MALLOC_CAP_SPIRAM);
+    livePushBuffer =
+        (uint8_t *)heap_caps_malloc(kLivePushBytes, MALLOC_CAP_SPIRAM);
+    liveStreamRuntimeReady = liveRing != nullptr && livePushBuffer != nullptr;
+    Serial.printf(
+        "LIVE_STREAM %s (ring=%u push=%u PSRAM)\n",
+        liveStreamRuntimeReady ? "ready" : "disabled",
+        static_cast<unsigned>(kLiveRingBytes),
+        static_cast<unsigned>(kLivePushBytes));
+  } else {
+    Serial.println("LIVE_STREAM disabled");
+  }
   if (fileMutex == nullptr) {
     Serial.println("ERROR: file mutex allocation failed.");
     while (true) {
