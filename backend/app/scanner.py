@@ -398,6 +398,15 @@ class RecordingScanner:
                     self._save_live_state(state)
                 continue
             changed = False
+            # 流式引擎正在为该录音直播出字时跳过分段转写，避免双通道互相
+            # 覆盖同一篇笔记；流式会话结束后残余分段仍可兜底处理。
+            stem = Path(base_object).stem
+            device_id = entry.get("device_id") or ""
+            preview_object = "%s%s/live/%s/%s.wav" % (
+                self.settings.recordings_prefix, device_id, stem, stem
+            )
+            if self.repository.has_live_stream_session(preview_object):
+                continue
             for item in sorted(items, key=lambda value: value.object_name):
                 segment_name = Path(item.object_name).name
                 known = entry["segments"].get(segment_name)

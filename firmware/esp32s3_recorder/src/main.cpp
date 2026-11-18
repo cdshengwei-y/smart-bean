@@ -206,6 +206,63 @@ constexpr char kSegmentMarker[] = "__s";
 // 边录边传总开关：录音中持续上传已完结的分段副本。
 // 若实测 WiFi 射频干扰麦克风音质，编译时置 0 可整体回退。
 constexpr bool kLiveUploadEnabled = RECORDER_LIVE_UPLOAD != 0;
+
+#ifndef RECORDER_LIVE_STREAM_URL
+#define RECORDER_LIVE_STREAM_URL ""
+#endif
+// 直播 PCM 流推送（sherpa 秒级出字）：录音中每 2s 把 PCM 尾块推给 Mac
+// 流式引擎。URL 为空则整体关闭；关闭时仅靠 60s 分段兜底出字。
+constexpr char kLiveStreamUrl[] = RECORDER_LIVE_STREAM_URL;
+constexpr bool kLiveStreamEnabled = sizeof(kLiveStreamUrl) > 1;
+constexpr uint32_t kLivePcmPushIntervalMs = 2000;
+constexpr size_t kLiveRingBytes = 96 * 1024;  // ~3 秒 16k s16le PCM
+
+// 直播 PCM 环形缓冲：audioTask 生产（写卡同时写入），uploadTask 消费
+// （网络推送）。满时丢最老数据——直播优先新鲜度。
+static uint8_t liveRing[kLiveRingBytes];
+static volatile size_t liveRingHead = 0;  // 写位置
+static volatile size_t liveRingTail = 0;  // 读位置
+static volatile bool liveRingOverflow = false;
+SemaphoreHandle_t liveRingMutex;
+
+static inline void liveRingLock() {
+  xSemaphoreTakeRecursive(liveRingMutex, portMAX_DELAY);
+}
+static inline void liveRingUnlock() {
+  xSemaphoreGiveRecursive(liveRingMutex);
+}
+
+static size_t liveRingAvailable() {
+  return (liveRingHead + kLiveRingBytes - liveRingTail) % kLiveRingBytes;
+}
+
+static void liveRingPush(const uint8_t *data, size_t length) {
+  if (!liveRingMutex) return;
+  liveRingLock();
+  for (size_t index = 0; index < length; ++index) {
+    liveRing[liveRingHead] = data[index];
+    liveRingHead = (liveRingHead + 1) % kLiveRingBytes;
+    if (liveRingHead == liveRingTail) {
+      liveRingTail = (liveRingTail + 1) % kLiveRingBytes;
+      liveRingOverflow = true;
+    }
+  }
+  liveRingUnlock();
+}
+
+static size_t liveRingTake(uint8_t *out, size_t capacity) {
+  if (!liveRingMutex) return 0;
+  liveRingLock();
+  size_t available = liveRingAvailable();
+  size_t count = available < capacity ? available : capacity;
+  for (size_t index = 0; index < count; ++index) {
+    out[index] = liveRing[liveRingTail];
+    liveRingTail = (liveRingTail + 1) % kLiveRingBytes;
+  }
+  liveRingOverflow = false;
+  liveRingUnlock();
+  return count;
+}
 constexpr char kUploadStateSuffix[] = ".upload";
 constexpr char kUploadStateTempSuffix[] = ".upload.tmp";
 constexpr char kSleepMarkerPath[] = "/recordings/.last_sleep";
@@ -2655,6 +2712,9 @@ void audioTask(void *) {
         lastRecordingErrorCode = "TF_CARD_WRITE_FAILED";
         recording = false;
       } else {
+        if (kLiveStreamEnabled) {
+          liveRingPush(buffer, bytesRead);
+        }
         if (millis() - lastRecordingFlushAt >= kRecordingFlushIntervalMs) {
           // Bound the amount of audio at risk if the battery disappears without
           // allowing the normal stop path to close the file.
@@ -3059,7 +3119,46 @@ bool uploadRecordingToMinio(const String &name) {
   return uploadRecordingToMinioWith(file, name);
 }
 
+static uint8_t livePushBuffer[64 * 1024];
+
+bool pushLivePcmChunk(const String &device, const String &stem) {
+  const size_t length = liveRingTake(livePushBuffer, sizeof(livePushBuffer));
+  if (length == 0) {
+    return true;
+  }
+  WiFiClient plainClient;
+  const String host = kLiveStreamUrl;
+  const int schemeEnd = host.indexOf("//");
+  const String rest = schemeEnd > 0 ? host.substring(schemeEnd + 2) : host;
+  const int slash = rest.indexOf('/');
+  const String authority = slash > 0 ? rest.substring(0, slash) : rest;
+  const String path = slash > 0 ? rest.substring(slash) : "/";
+  const int colon = authority.lastIndexOf(':');
+  const String hostName = colon > 0 ? authority.substring(0, colon) : authority;
+  const int port = colon > 0 ? authority.substring(colon + 1).toInt() : 80;
+  if (!plainClient.connect(hostName.c_str(), port)) {
+    Serial.println("LIVE_PUSH_CONNECT_FAILED");
+    return false;
+  }
+  plainClient.printf(
+      "POST %s?device=%s&recording=%s HTTP/1.1\r\n"
+      "Host: %s\r\nContent-Type: application/octet-stream\r\n"
+      "Content-Length: %u\r\nConnection: close\r\n\r\n",
+      path.c_str(), device.c_str(), stem.c_str(), authority.c_str(),
+      static_cast<unsigned>(length));
+  plainClient.write(livePushBuffer, length);
+  plainClient.flush();
+  String statusLine = plainClient.readStringUntil('\n');
+  const bool ok = statusLine.indexOf(" 200") > 0;
+  plainClient.stop();
+  if (!ok) {
+    Serial.printf("LIVE_PUSH_HTTP %s\n", statusLine.c_str());
+  }
+  return ok;
+}
+
 void uploadTask(void *) {
+  uint32_t lastLivePushAt = 0;
   while (true) {
     if (cloudStorageChangedPending && !recording && !uploadInProgress) {
       clearUploadMarkers();
@@ -3072,7 +3171,12 @@ void uploadTask(void *) {
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
-    if (!uploadScanRequested) {
+    const bool liveStreamActive =
+        kLiveStreamEnabled && recording && currentFileName.length() > 0;
+    const bool livePending =
+        liveStreamActive && liveRingAvailable() > 0 &&
+        millis() - lastLivePushAt >= kLivePcmPushIntervalMs;
+    if (!uploadScanRequested && !livePending) {
       // Keep BLE available without scanning the TF card while idle.
       if (wifiAccessLeaseActive()) {
         maintainWifi(true);
@@ -3082,12 +3186,39 @@ void uploadTask(void *) {
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
+    if (livePending || (liveStreamActive && liveRingAvailable() > 0)) {
+      // 录音中维持 WiFi：直播推流与分段上传共用网络与重试节奏。
+      if (!maintainWifi()) {
+        vTaskDelay(pdMS_TO_TICKS(kUploadRetryIntervalMs));
+        continue;
+      }
+      if (livePending) {
+        String stem = currentFileName;
+        if (stem.endsWith(".wav")) {
+          stem = stem.substring(0, stem.length() - 4);
+        }
+        if (pushLivePcmChunk(deviceId(), stem)) {
+          lastLivePushAt = millis();
+        } else {
+          // 推送失败按上传重试节奏再试，期间 ring 会持续积累最新音频
+          lastLivePushAt = millis() - kLivePcmPushIntervalMs +
+              kUploadRetryIntervalMs;
+        }
+      }
+    } else if (!uploadScanRequested) {
+      continue;
+    }
     sdLock();
     const bool liveWhileRecording = kLiveUploadEnabled && recording;
     const String pendingName = findNextPendingRecording(liveWhileRecording);
     sdUnlock();
     // 录音中只放行分段上传；完整录音照旧等录音结束再传。
     if (pendingName.isEmpty() || (recording && !isSegmentFileName(pendingName))) {
+      if (liveStreamActive && liveRingAvailable() > 0) {
+        // 直播推流进行中：保持 WiFi，等下一次推送/分段（不进 idle 停网）
+        vTaskDelay(pdMS_TO_TICKS(100));
+        continue;
+      }
       // BLE stays available; Wi-Fi is only needed while completed recordings await upload.
       uploadScanRequested = false;
       if (wifiAccessLeaseActive()) {
@@ -3349,6 +3480,7 @@ void setup() {
   Serial.printf("Firmware: %s, device ID: %s\n", kFirmwareVersion, deviceId().c_str());
   Serial.printf("RESET_REASON %d\n", static_cast<int>(esp_reset_reason()));
   fileMutex = xSemaphoreCreateRecursiveMutex();
+  liveRingMutex = xSemaphoreCreateRecursiveMutex();
   if (fileMutex == nullptr) {
     Serial.println("ERROR: file mutex allocation failed.");
     while (true) {

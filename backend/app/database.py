@@ -1434,7 +1434,8 @@ class JobRepository:
                         current.status = 'completed'
                         OR current.status IN (
                             'note_pending', 'note_processing', 'ai_pending',
-                            'filtering', 'ai_failed', 'note_failed'
+                            'filtering', 'ai_failed', 'note_failed',
+                            'live_streaming'
                         )
                     )
                     AND NOT EXISTS (
@@ -1466,7 +1467,8 @@ class JobRepository:
                     current.status = 'completed'
                     OR current.status IN (
                         'note_pending', 'note_processing', 'ai_pending',
-                        'filtering', 'ai_failed', 'note_failed'
+                        'filtering', 'ai_failed', 'note_failed',
+                        'live_streaming'
                     )
                 )
                 AND NOT EXISTS (
@@ -1493,6 +1495,17 @@ class JobRepository:
                 "WHERE object_name NOT LIKE '%/live/%' ORDER BY id"
             )
         )
+
+    def has_live_stream_session(self, preview_object: str) -> bool:
+        """流式引擎是否正在为该录音直播出字（scanner 据此跳过分段转写）。"""
+        if not preview_object:
+            return False
+        row = self.connection.execute(
+            "SELECT id FROM transcription_jobs "
+            "WHERE object_name = ? AND status = 'live_streaming'",
+            (preview_object,),
+        ).fetchone()
+        return row is not None
 
     def upsert_live_preview_job(
         self,

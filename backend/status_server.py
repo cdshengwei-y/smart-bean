@@ -543,6 +543,9 @@ class StatusHandler(BaseHTTPRequestHandler):
         if path == "/health":
             self.send_json(HTTPStatus.OK, {"ok": True})
             return
+        if path == "/live/frame":
+            self.live_frame()
+            return
         if path == "/api/status":
             try:
                 self.send_json(HTTPStatus.OK, status_payload(self.database_path, self.model_config_path))
@@ -572,6 +575,9 @@ class StatusHandler(BaseHTTPRequestHandler):
             self._inbox_guard(self.inbox_complete_multipart)
             return
         path = urlsplit(self.path).path
+        if path == "/live/stream":
+            self.live_stream()
+            return
         if path == "/api/auth/register":
             self.auth_register()
             return
@@ -738,6 +744,39 @@ class StatusHandler(BaseHTTPRequestHandler):
         if written != content_length:
             raise ValueError("请求内容不完整。")
         return digest.hexdigest()
+
+    def live_stream(self) -> None:
+        """录音豆固件直播 PCM 推送端点：body 为 16k 单声道 s16le 原始 PCM。"""
+        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+        device_id = query.get("device", [""])[0].strip()
+        stem = query.get("recording", [""])[0].strip()
+        if not device_id or not stem:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": "device/recording required"})
+            return
+        try:
+            pcm = self.read_request_body(maximum_bytes=1024 * 1024)
+        except ValueError as exc:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        from app import live_engine
+
+        if not live_engine.is_available():
+            self.send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"error": "sherpa-onnx 流式模型不可用"},
+            )
+            return
+        snapshot = live_engine.feed_pcm(device_id, stem, pcm)
+        self.send_json(HTTPStatus.OK, snapshot)
+
+    def live_frame(self) -> None:
+        """当前直播会话快照（APP 实时字幕展示）。"""
+        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+        device_id = query.get("device", [""])[0].strip()
+        stem = query.get("recording", [""])[0].strip()
+        from app import live_engine
+
+        self.send_json(HTTPStatus.OK, live_engine.snapshot(device_id, stem))
 
     def inbox_create_multipart(self) -> None:
         settings = receiver_settings()

@@ -79,9 +79,8 @@ class OtaServerTests(unittest.TestCase):
             self.assertEqual(manifest["version"], "0.3.11")
             self.assertEqual(manifest["url"], release["firmware"]["url"])
             self.assertEqual(release["firmware"]["version"], "0.3.11")
-            self.assertEqual(release["app"]["version"], "0.5.32+56")
-            self.assertEqual(release["app"]["url"], "")
-            self.assertEqual(release["app"]["ios_url"], "")
+            # 未配置 APK 时 app 字段为 None（部署版语义：有 apk_url 才有 app）
+            self.assertIsNone(release["app"])
 
 
 if __name__ == "__main__":
