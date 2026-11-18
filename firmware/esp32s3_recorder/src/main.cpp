@@ -1803,11 +1803,10 @@ bool maintainWifi(bool forceRetry) {
   WiFi.scanDelete();
 #endif
   WiFi.begin(RECORDER_WIFI_SSID, RECORDER_WIFI_PASSWORD);
-  // 禁用 modem sleep：BLE 连接 + WiFi 共存时，modem sleep 会导致 WiFi
-  // 每 2-3 秒被 AP 踢出（ASSOC_LEAVE）重连循环，射频调度反过来干扰
-  // SD 卡 SPI 写卡（sdWait/select 失败）→ 录音写卡中断。设备常接供电，
-  // 关闭省电换取共存稳定（2026-11-18 实测教训）。
-  WiFi.setSleep(false);
+  // 注意：BLE 连接存在时禁止 WiFi.setSleep(false)——ESP-IDF 共存机制
+  // 强制要求 modem sleep，关闭会触发 abort() 崩溃（2026-11-18 实测）。
+  // BLE+WiFi 共存的正确做法是让出射频窗口：onConnect 里请求更大的
+  // 蓝牙连接间隔 + 录音中降低状态通知频率。
   const uint32_t deadline = millis() + kWifiConnectTimeoutMs;
   while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
     delay(250);
@@ -2346,10 +2345,21 @@ void deleteBleFile(const String &name) {
 }
 
 class BleServerCallbacks final : public BLEServerCallbacks {
-  void onConnect(BLEServer *) override {
+  void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
     bleClientConnected = true;
     bleInactiveSince = 0;
     bleStatusUpdatePending = true;
+    if (server != nullptr && param != nullptr) {
+      // BLE+WiFi 共存：请求 120-200ms 连接间隔 + 从机延迟 2，把射频窗口
+      // 让给 WiFi——否则 modem sleep 共存调度下 WiFi 反复被 AP 踢出。
+      esp_ble_conn_update_params_t params = {};
+      memcpy(params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+      params.min_int = 96;   // 120 ms（单位 1.25ms）
+      params.max_int = 160;  // 200 ms
+      params.latency = 2;
+      params.timeout = 2000;
+      esp_ble_gap_update_conn_params(&params);
+    }
   }
 
   void onDisconnect(BLEServer *) override {
@@ -3617,7 +3627,10 @@ void loop() {
     BLEDevice::startAdvertising();
   }
   if (bleStatusUpdatePending || millis() >= nextBleStatusAt) {
-    nextBleStatusAt = millis() + 1000;
+    // 录音中状态通知降到 5 秒一次：BLE notify 会占用共存射频窗口，
+    // 给 WiFi 推流让路（APP 侧轮询后端 /live/frame 补实时性）。
+    const uint32_t bleStatusInterval = recording ? 5000 : 1000;
+    nextBleStatusAt = millis() + bleStatusInterval;
     const bool forceStatus = bleStatusUpdatePending;
     bleStatusUpdatePending = false;
     publishBleStatus(forceStatus);
