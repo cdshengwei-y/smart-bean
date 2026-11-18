@@ -1507,6 +1507,22 @@ class JobRepository:
         ).fetchone()
         return row is not None
 
+    def authoritative_note_completed(self, object_name: str) -> bool:
+        """权威完整录音的笔记是否已完成（AI 终稿落定）。
+
+        直播分段在此之后才可清理——过早删除会在权威转写出预览文字前
+        丢掉分段（2026-11-18 实测教训：完整录音一上传就删分段，预览
+        笔记从未生成）。
+        """
+        if not object_name:
+            return False
+        row = self.connection.execute(
+            "SELECT id FROM transcription_jobs "
+            "WHERE object_name = ? AND status = 'completed'",
+            (object_name,),
+        ).fetchone()
+        return row is not None
+
     def upsert_live_preview_job(
         self,
         object_name: str,

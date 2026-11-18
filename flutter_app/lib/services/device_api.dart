@@ -41,7 +41,11 @@ class DeviceApi {
       await _jsonRequest(
         base,
         'GET',
-        '/live/frame?device=$device&recording=$recording',
+        '/live/frame',
+        query: {
+          'device': device,
+          'recording': recording,
+        },
       );
 
   Future<void> setClock(Uri base) async {
@@ -256,9 +260,16 @@ class DeviceApi {
     String method,
     String path, {
     Map<String, dynamic>? body,
+    Map<String, String>? query,
     Set<int> acceptedErrors = const {},
   }) async {
-    final request = await _client.openUrl(method, _resolve(base, path));
+    final resolved = query == null
+        ? _resolve(base, path)
+        : base.replace(
+            path: path,
+            queryParameters: query,
+          );
+    final request = await _client.openUrl(method, resolved);
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     if (_authToken != null && _authToken!.isNotEmpty) {
       request.headers.set(

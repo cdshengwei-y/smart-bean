@@ -386,8 +386,10 @@ class RecordingScanner:
                 parsed = self._parse_live_base(items[0].object_name)
                 device_id = parsed[1] if parsed else ""
                 entry = {"device_id": device_id, "segments": {}}
-            if base_object in authoritative_objects:
-                # 权威链路（完整录音）已接管：清空分段对象与预览状态。
+            if self.repository.authoritative_note_completed(base_object):
+                # 权威链路（完整录音）AI 终稿完成：清理分段对象与预览状态。
+                # 之前在"完整录音一出现"就删分段，导致分段预览从未出字
+                # （2026-11-18 实测教训）——现在等权威完成后才清理。
                 for item in items:
                     try:
                         self.store.delete_recording(item.object_name)
@@ -396,6 +398,10 @@ class RecordingScanner:
                 if state.get(base_object) is not None:
                     state.pop(base_object, None)
                     self._save_live_state(state)
+                continue
+            if base_object in authoritative_objects:
+                # 完整录音已上传、权威转写进行中：跳过分段转写（权威 partial
+                # 会接棒出字且被插件列表遮蔽预览行），分段对象保留到终稿完成。
                 continue
             changed = False
             # 流式引擎正在为该录音直播出字时跳过分段转写，避免双通道互相

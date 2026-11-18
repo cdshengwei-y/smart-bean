@@ -58,12 +58,16 @@ class MinioRecordingStore:
             raise RuntimeError("无法下载待转写录音 %s：%s" % (object_name, exc)) from exc
 
     def list_live_segments(self) -> List[RecordingObject]:
-        """列出直播预览分段（recordings_prefix + live/ 之下）。"""
-        live_prefix = self.settings.recordings_prefix.rstrip("/") + "/live/"
+        """列出直播预览分段（recordings/<设备>/live/<录音>/...）。
+
+        注意 prefix 必须是 recordings_prefix 整体（设备 key 中设备 ID 位于
+        live 之前），再用 is_live_segment_object 过滤——之前误用
+        "recordings/live/" 前缀导致云端分段永远扫不到。
+        """
         try:
             objects = self.client.list_objects(
                 self.settings.minio_bucket,
-                prefix=live_prefix,
+                prefix=self.settings.recordings_prefix,
                 recursive=True,
             )
             return [
@@ -75,6 +79,9 @@ class MinioRecordingStore:
                 )
                 for item in objects
                 if str(item.object_name or "").lower().endswith(".wav")
+                and is_live_segment_object(
+                    str(item.object_name or ""), self.settings.recordings_prefix
+                )
             ]
         except S3Error as exc:
             raise RuntimeError("无法扫描直播分段：%s" % exc) from exc

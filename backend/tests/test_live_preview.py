@@ -170,12 +170,12 @@ class LivePreviewPipelineTest(unittest.TestCase):
         self.assertIn("recordings/bean_x/REC_001.wav", state)
 
     def test_authoritative_recording_takes_over_and_cleans_segments(self) -> None:
+        from app.storage.contract import RecordingObject as RecObject
+
         scanner = self._scanner()
         scanner.process_live_previews()
         base_object = "recordings/bean_x/REC_001.wav"
-        from app.storage.contract import RecordingObject as RecObject
-
-        # 完整录音出现在存储中（权威链路接管的信号）
+        # 完整录音出现在存储中 + 权威笔记已完成（AI 终稿）——清理的触发条件
         self.store.recordings.append(
             RecObject(
                 object_name=base_object,
@@ -184,6 +184,21 @@ class LivePreviewPipelineTest(unittest.TestCase):
                 last_modified=datetime.now(timezone.utc),
             )
         )
+        self.repository.discover(
+            [
+                RecObject(
+                    object_name=base_object,
+                    etag="full",
+                    size=100,
+                    last_modified=datetime.now(timezone.utc),
+                )
+            ]
+        )
+        self.repository.connection.execute(
+            "UPDATE transcription_jobs SET status = 'completed' WHERE object_name = ?",
+            (base_object,),
+        )
+        self.repository.connection.commit()
         scanner.process_live_previews()
         self.assertEqual(
             sorted(self.store.deleted),
