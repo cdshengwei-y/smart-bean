@@ -2227,6 +2227,11 @@ class _ControlPage extends StatelessWidget {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
           children: [
+            if (controller.unifiedAppUpdateNeeded &&
+                (controller.unifiedRelease?.appUrl.isNotEmpty ?? false)) ...[
+              _AppUpdateBanner(controller: controller),
+              const SizedBox(height: 10),
+            ],
             if (controller.bleConnected &&
                 controller.unifiedFirmwareUpdateNeeded) ...[
               _FirmwareUpdateBanner(controller: controller),
@@ -2253,6 +2258,49 @@ class _ControlPage extends StatelessWidget {
 }
 
 enum _WorkflowState { done, active, waiting, failed }
+
+/// 控制页顶部横幅：App 有新版本时提示，点击直接下载安装 APK。
+class _AppUpdateBanner extends StatelessWidget {
+  const _AppUpdateBanner({required this.controller});
+  final RecordingBeanController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final version = controller.unifiedRelease?.appVersion ?? '';
+    return Card(
+      color: scheme.secondaryContainer,
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          controller.installUnifiedUpdate();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Icon(Icons.new_releases_outlined, color: scheme.onSecondaryContainer),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  version.isEmpty
+                      ? '录音豆 App 有新版本，点击立即更新'
+                      : '录音豆 App 有新版本 v$version，点击立即更新',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSecondaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ),
+              Icon(Icons.download_outlined, color: scheme.onSecondaryContainer),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// 控制页顶部横幅：设备固件有新版本时提示，点击进入检查更新页。
 class _FirmwareUpdateBanner extends StatelessWidget {
