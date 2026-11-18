@@ -1803,6 +1803,11 @@ bool maintainWifi(bool forceRetry) {
   WiFi.scanDelete();
 #endif
   WiFi.begin(RECORDER_WIFI_SSID, RECORDER_WIFI_PASSWORD);
+  // 禁用 modem sleep：BLE 连接 + WiFi 共存时，modem sleep 会导致 WiFi
+  // 每 2-3 秒被 AP 踢出（ASSOC_LEAVE）重连循环，射频调度反过来干扰
+  // SD 卡 SPI 写卡（sdWait/select 失败）→ 录音写卡中断。设备常接供电，
+  // 关闭省电换取共存稳定（2026-11-18 实测教训）。
+  WiFi.setSleep(false);
   const uint32_t deadline = millis() + kWifiConnectTimeoutMs;
   while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
     delay(250);
