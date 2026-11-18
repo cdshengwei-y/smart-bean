@@ -138,6 +138,14 @@ class RecordingBeanController extends ChangeNotifier {
   double? bleSdFreeMb;
   double? bleSdTotalMb;
   String bleCurrentFile = '';
+  // 直播流式引擎快照（/live/frame）：录音中每 2.5 秒轮询一次，
+  // 工作流面板显示实时字幕（sherpa partial + 已定稿句）。
+  bool liveActive = false;
+  String livePartial = '';
+  List<String> liveSentences = const [];
+  String liveText = '';
+  Timer? _liveFrameTimer;
+  int _liveFrameInflight = 0;
   String bleFirmware = '';
   String bleOtaStatus = '';
   String bleWifiAddress = '';
@@ -428,6 +436,7 @@ class RecordingBeanController extends ChangeNotifier {
     }
     bleRecording = value.recording;
     bleRecordingSeconds = value.seconds;
+    _syncLiveFramePolling();
     bleUploading = value.uploading;
     bleUploadSentBytes = value.uploadSentBytes;
     bleUploadTotalBytes = value.uploadTotalBytes;
@@ -1756,9 +1765,54 @@ class RecordingBeanController extends ChangeNotifier {
     return '操作失败，请稍后重试';
   }
 
+  void _syncLiveFramePolling() {
+    final shouldPoll = bleConnected && bleRecording;
+    if (shouldPoll && _liveFrameTimer == null) {
+      unawaited(_pollLiveFrame());
+      _liveFrameTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+        unawaited(_pollLiveFrame());
+      });
+    } else if (!shouldPoll && _liveFrameTimer != null) {
+      _liveFrameTimer?.cancel();
+      _liveFrameTimer = null;
+      // 停止录音后保留最后一帧快照（用户可能还在看），只清 partial 状态
+      livePartial = '';
+      liveActive = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _pollLiveFrame() async {
+    if (_liveFrameInflight > 0) return;
+    _liveFrameInflight++;
+    try {
+      final device = status.deviceId.trim().isNotEmpty
+          ? status.deviceId.trim()
+          : pairedRecorderDeviceId.trim();
+      var stem = bleCurrentFile.trim();
+      if (stem.endsWith('.wav')) stem = stem.substring(0, stem.length - 4);
+      if (device.isEmpty || stem.isEmpty) return;
+      final base = _api.normalizeAddress(
+        backendStatusAddress,
+        statusService: true,
+      );
+      final frame = await _api.liveFrame(base, device, stem);
+      liveActive = frame['active'] == true;
+      livePartial = (frame['partial'] ?? '') as String;
+      liveSentences = (frame['sentences'] as List?)?.cast<String>() ?? const [];
+      liveText = (frame['text'] ?? '') as String;
+      notifyListeners();
+    } catch (_) {
+      // 流式引擎不可用时静默退化为普通工作流展示
+    } finally {
+      _liveFrameInflight--;
+    }
+  }
+
   @override
   void dispose() {
     _statusTimer?.cancel();
+    _liveFrameTimer?.cancel();
     _backendTimer?.cancel();
     _recordingTimer?.cancel();
     _scanTimer?.cancel();

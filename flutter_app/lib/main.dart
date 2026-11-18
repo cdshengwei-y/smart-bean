@@ -2242,6 +2242,8 @@ class _ControlPage extends StatelessWidget {
             const SizedBox(height: 10),
             _RecordingStatusPanel(controller: controller),
             const SizedBox(height: 10),
+            _LiveTranscriptionPanel(controller: controller),
+            const SizedBox(height: 10),
             _TranscriptionPanel(controller: controller),
           ],
         ),
@@ -2737,6 +2739,89 @@ class _DeviceButton extends StatelessWidget {
         icon: const Icon(Icons.bluetooth),
         label: Text(
           '连接 ${name.isEmpty ? '录音豆' : name}${previous ? ' · 上次连过' : ''}',
+        ),
+      ),
+    );
+  }
+}
+
+/// 直播实时字幕卡片：录音中显示 sherpa 流式引擎的 partial 与已定稿句。
+class _LiveTranscriptionPanel extends StatelessWidget {
+  const _LiveTranscriptionPanel({required this.controller});
+  final RecordingBeanController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final recording = controller.bleConnected && controller.bleRecording;
+    final show = recording && controller.liveActive;
+    if (!show) {
+      return const SizedBox.shrink();
+    }
+    final sentences = controller.liveSentences;
+    final partial = controller.livePartial;
+    final recent = sentences.length > 6
+        ? sentences.sublist(sentences.length - 6)
+        : sentences;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                SizedBox.square(
+                  dimension: 10,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '实时转写中 · 已出 ${sentences.length} 句',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (recent.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 180),
+                child: SingleChildScrollView(
+                  reverse: true,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final sentence in recent)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            sentence,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            if (partial.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  partial,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        fontStyle: FontStyle.italic,
+                      ),
+                ),
+              ),
+          ],
         ),
       ),
     );
