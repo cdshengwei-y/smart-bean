@@ -2394,6 +2394,11 @@ class _WorkflowPanel extends StatelessWidget {
     }.contains(status);
     final aiFailed = status == 'ai_failed';
     final aiDone = status == 'completed';
+    final aiFilterDisabled =
+        !(controller.backendStatus?.aiFilterEnabled ?? true) ||
+        job?.aiStage == 'skipped';
+    final noteDone = (aiFilterDisabled ? transcriptionDone : aiDone) &&
+        job?.noteSynced == true;
     final steps = [
       _WorkflowStep(
         '连接',
@@ -2431,21 +2436,22 @@ class _WorkflowPanel extends StatelessWidget {
             ? _WorkflowState.active
             : _WorkflowState.waiting,
       ),
-      _WorkflowStep(
-        'AI处理',
-        aiFailed
-            ? _WorkflowState.failed
-            : aiDone
-            ? _WorkflowState.done
-            : aiActive
-            ? _WorkflowState.active
-            : _WorkflowState.waiting,
-      ),
+      if (!aiFilterDisabled)
+        _WorkflowStep(
+          'AI处理',
+          aiFailed
+              ? _WorkflowState.failed
+              : aiDone
+              ? _WorkflowState.done
+              : aiActive
+              ? _WorkflowState.active
+              : _WorkflowState.waiting,
+        ),
       _WorkflowStep(
         '笔记',
-        aiDone && job?.noteSynced == true
+        noteDone
             ? _WorkflowState.done
-            : aiDone
+            : (aiFilterDisabled ? transcriptionDone : aiDone)
             ? _WorkflowState.active
             : _WorkflowState.waiting,
       ),

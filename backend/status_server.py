@@ -31,7 +31,7 @@ from app.cloud_storage_config import (
     public_cloud_storage_config,
     save_cloud_storage_config,
 )
-from app.database import JobRepository
+from app.database import JobRepository, ai_filter_enabled
 from app.storage.loader import DEFAULT_STORAGE_FACTORY, load_recording_store
 from app.storage.inbox import (
     PART_NUMBER_PATTERN,
@@ -477,6 +477,7 @@ def status_payload(database_path: Path, model_config_path: Optional[Path] = None
             "devices": devices,
             "jobs": jobs,
             "asr": ModelRegistry(model_config_path).status(include_health=True),
+            "ai_filter_enabled": ai_filter_enabled(),
         }
     finally:
         if sync_repository is not None:

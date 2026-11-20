@@ -561,6 +561,7 @@ class TranscriptionBackendStatus {
     this.asr,
     this.customAsr = const CustomAsrConfig(),
     this.customAsrs = const [],
+    this.aiFilterEnabled = true,
   });
 
   factory TranscriptionBackendStatus.fromJson(Map<String, dynamic> json) {
@@ -607,6 +608,7 @@ class TranscriptionBackendStatus {
       asr: json['asr'] is Map ? TranscriptionAsrStatus.fromJson(asrJson) : null,
       customAsr: customAsrs.isNotEmpty ? customAsrs.first : legacyCustom,
       customAsrs: customAsrs,
+      aiFilterEnabled: json['ai_filter_enabled'] as bool? ?? true,
     );
   }
 
@@ -615,6 +617,8 @@ class TranscriptionBackendStatus {
   final TranscriptionAsrStatus? asr;
   final CustomAsrConfig customAsr;
   final List<CustomAsrConfig> customAsrs;
+  // 后端 AI 筛选开关（false 时工作流隐藏 AI 处理步骤）
+  final bool aiFilterEnabled;
 }
 
 class WorkFilterProfile {
