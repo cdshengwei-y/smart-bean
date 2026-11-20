@@ -357,6 +357,10 @@ String lastRecordingErrorCode;
 String lastCompletedFileName;
 String lastBleStatus;
 volatile bool bleClientConnected = false;
+// 连接参数更新延迟执行（避开连接初期的 MTU 协商窗口）
+static bool bleConnParamsPending = false;
+static uint32_t bleConnParamsPendingAt = 0;
+static esp_bd_addr_t blePendingConnParamsBda = {};
 volatile bool bleStatusUpdatePending = false;
 volatile bool bleAdvertisingRestartPending = false;
 volatile bool otaUpdateRequested = false;
@@ -2373,15 +2377,14 @@ class BleServerCallbacks final : public BLEServerCallbacks {
     bleInactiveSince = 0;
     bleStatusUpdatePending = true;
     if (server != nullptr && param != nullptr) {
-      // BLE+WiFi 共存：请求 120-200ms 连接间隔 + 从机延迟 2，把射频窗口
-      // 让给 WiFi——否则 modem sleep 共存调度下 WiFi 反复被 AP 踢出。
-      esp_ble_conn_update_params_t params = {};
-      memcpy(params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-      params.min_int = 96;   // 120 ms（单位 1.25ms）
-      params.max_int = 160;  // 200 ms
-      params.latency = 2;
-      params.timeout = 2000;
-      esp_ble_gap_update_conn_params(&params);
+      // BLE+WiFi 共存：连接参数更新请求 120-200ms 间隔 + 从机延迟 2，
+      // 把射频窗口让给 WiFi。
+      // ⚠️ 必须延迟执行：连接瞬间立即更新参数会和 APP 的 MTU 协商抢
+      // ATT 窗口，实测 MTU 协商被拖到 3.8 秒（2026-11-20）。存下地址，
+      // 由主循环在连接满 3 秒后执行。
+      memcpy(blePendingConnParamsBda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+      bleConnParamsPendingAt = millis();
+      bleConnParamsPending = true;
     }
   }
 
@@ -3655,6 +3658,19 @@ void loop() {
   if (bleAdvertisingRestartPending) {
     bleAdvertisingRestartPending = false;
     BLEDevice::startAdvertising();
+  }
+  if (bleConnParamsPending && millis() - bleConnParamsPendingAt >= 3000) {
+    // 连接满 3 秒后再更新连接参数：避开连接初期的 MTU 协商窗口
+    // （连接即更新参数会让 MTU 协商卡 3.8 秒——2026-11-20 实测）。
+    bleConnParamsPending = false;
+    esp_ble_conn_update_params_t params = {};
+    memcpy(params.bda, blePendingConnParamsBda, sizeof(esp_bd_addr_t));
+    params.min_int = 96;   // 120 ms（单位 1.25ms）
+    params.max_int = 160;  // 200 ms
+    params.latency = 2;
+    params.timeout = 2000;
+    esp_ble_gap_update_conn_params(&params);
+    Serial.println("BLE conn params updated (delayed)");
   }
   if (bleStatusUpdatePending || millis() >= nextBleStatusAt) {
     // 录音中状态通知降到 5 秒一次：BLE notify 会占用共存射频窗口，

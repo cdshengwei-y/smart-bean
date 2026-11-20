@@ -271,13 +271,9 @@ class BleRecorderService {
     _statusSubscription = statusSubscription;
     _filesSubscription = filesSubscription;
     mark('characteristics subscribed');
-    try {
-      final initialStatus = await _ble.readCharacteristic(status);
-      mark('initial status read done');
-      if (connectionEpoch == _connectionEpoch) _parseStatus(initialStatus);
-    } catch (_) {
-      if (connectionEpoch == _connectionEpoch) rethrow;
-    }
+    // 初始状态不单独 read（实测 964ms）——固件在 onConnect 后会主动
+    // notify 状态（≤1 秒），等推送更快且逻辑等价。
+    mark('prepare done (status via notify)');
   }
 
   void _parseStatus(List<int> bytes) {
