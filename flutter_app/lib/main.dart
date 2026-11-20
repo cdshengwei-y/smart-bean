@@ -2547,8 +2547,8 @@ class _WorkflowPanel extends StatelessWidget {
       'optimizing' => '正在优化转写文字${_elapsedText(job)}',
       'filtering' => '优化稿已保存，正在筛选内容${_elapsedText(job)}',
       'ai_failed' => _aiFailureMessage(job),
-      'completed' when job.noteSynced => 'AI处理完成，最终笔记已写入Obsidian',
-      'completed' => 'AI处理完成，等待写入Obsidian',
+      'completed' when job.noteSynced => '转写完成，最终笔记已写入Obsidian',
+      'completed' => '转写完成，正在写入Obsidian',
       _ => '等待后台处理',
     };
   }

@@ -320,14 +320,29 @@ class RecordingScanner:
             return result.text
 
     def _upload_live_preview(self, base_object: str, entry: Dict[str, Any]) -> None:
-        """聚合文本写入直播预览任务行，笔记生成走现有 note 队列。"""
+        """聚合文本写入直播预览任务行，笔记生成走现有 note 队列。
+
+        每段带时间标注（设备 60 秒切段，段号即时间区间）：
+        **第 N 段（MM:SS–MM:SS）** + 该段文字。
+        """
         parsed = self._parse_live_base(
             base_object.replace(self.settings.recordings_prefix, "", 1)
         )
         device_id = entry.get("device_id") or (parsed[1] if parsed else "")
         ordered = sorted(entry.get("segments", {}).items())
-        texts = [str(value.get("text") or "") for _, value in ordered]
-        joined = "\n\n".join(text for text in texts if text).strip()
+        blocks = []
+        for index, (_, value) in enumerate(ordered, start=1):
+            text = str(value.get("text") or "").strip()
+            if not text:
+                continue
+            start_seconds = (index - 1) * 60
+            end_seconds = index * 60
+            start_label = "%d:%02d" % (start_seconds // 60, start_seconds % 60)
+            end_label = "%d:%02d" % (end_seconds // 60, end_seconds % 60)
+            blocks.append(
+                "**第 %d 段（%s–%s）**\n%s" % (index, start_label, end_label, text)
+            )
+        joined = "\n\n".join(blocks).strip()
         if not joined:
             return
         stem = Path(base_object).stem

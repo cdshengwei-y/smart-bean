@@ -69,8 +69,16 @@ class DeviceFetcher:
     # ---------- 归档路径 ----------
 
     def _archive_path(self, name: str) -> Path:
+        """归档路径：分段（含 __s 标记）必须保留 live/<stem>/ 子结构，
+        与设备 MinIO key 同构——否则会被常规发现链路当成独立录音，
+        各分段各出一篇笔记（2026-11-20 实测教训）。"""
         archive_root = Path(self.settings.database_path).parent / "recordings_archive"
         device_dir = archive_root / self.settings.recordings_prefix.rstrip("/") / self.device_id
+        if "__s" in name:
+            stem = name.split("__s")[0]
+            segment_dir = device_dir / "live" / stem
+            segment_dir.mkdir(parents=True, exist_ok=True)
+            return segment_dir / name
         device_dir.mkdir(parents=True, exist_ok=True)
         return device_dir / name
 
