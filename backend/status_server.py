@@ -547,6 +547,11 @@ class StatusHandler(BaseHTTPRequestHandler):
         if path == "/live/frame":
             self.live_frame()
             return
+        if path == "/perf":
+            body = self.read_request_body(maximum_bytes=4000).decode("utf-8")
+            print("[PERF] " + body, flush=True)
+            self.send_json(HTTPStatus.OK, {"ok": True})
+            return
         if path == "/api/status":
             try:
                 self.send_json(HTTPStatus.OK, status_payload(self.database_path, self.model_config_path))
@@ -578,6 +583,11 @@ class StatusHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/live/stream":
             self.live_stream()
+            return
+        if path == "/perf":
+            body = self.read_request_body(maximum_bytes=4000).decode("utf-8")
+            print("[PERF] " + body, flush=True)
+            self.send_json(HTTPStatus.OK, {"ok": True})
             return
         if path == "/api/auth/register":
             self.auth_register()
