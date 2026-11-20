@@ -77,6 +77,10 @@ class RecordingBeanController extends ChangeNotifier {
   bool loading = false;
   DeviceStatus status = const DeviceStatus();
   List<RecordingFile> files = [];
+  // 后台重读的收集缓冲：读取期间界面继续显示旧列表，读完原子替换——
+  // 避免"刷新先显示暂无录音再闪出列表"（2026-11-20 用户反馈）。
+  List<RecordingFile> _freshFiles = [];
+  bool _collectingFresh = false;
   bool filesFromBle = false;
   bool selectionMode = false;
   final Set<String> selectedFileNames = {};
@@ -646,7 +650,9 @@ class RecordingBeanController extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      files = [];
+      // 不清空现有列表：读取期间旧列表继续显示，读完原子替换。
+      _freshFiles = [];
+      _collectingFresh = true;
       filesFromBle = true;
       selectionMode = false;
       selectedFileNames.clear();
@@ -677,6 +683,9 @@ class RecordingBeanController extends ChangeNotifier {
   void _onBleFileEvent(BleFileEvent event) {
     switch (event) {
       case BleFileFound(:final file):
+        if (_collectingFresh && !_freshFiles.any((item) => item.name == file.name)) {
+          _freshFiles = [..._freshFiles, file];
+        }
         if (!files.any((item) => item.name == file.name)) {
           files = [...files, file];
         }
@@ -686,6 +695,13 @@ class RecordingBeanController extends ChangeNotifier {
         } else {
           _fileTimeout?.cancel();
           loading = false;
+          // 读取完成：一次性替换为设备上的最新列表（旧列表中的
+          // 失效条目随之移除），替换前界面始终有内容显示。
+          if (_collectingFresh) {
+            files = _freshFiles;
+            _freshFiles = [];
+            _collectingFresh = false;
+          }
           if (_verifyingDeletion) {
             final remaining = files
                 .where((file) => _deletionVerificationNames.contains(file.name))
@@ -710,6 +726,9 @@ class RecordingBeanController extends ChangeNotifier {
         } else {
           _fileTimeout?.cancel();
           loading = false;
+          // 读取失败：丢弃未完成的收集，保留原列表显示。
+          _collectingFresh = false;
+          _freshFiles = [];
           this.message = '蓝牙读取失败：$message';
         }
     }
@@ -720,6 +739,9 @@ class RecordingBeanController extends ChangeNotifier {
     _fileTimeout?.cancel();
     _fileTimeout = Timer(const Duration(seconds: 20), () {
       pendingDeletionNames.clear();
+      // 超时：丢弃未完成的收集，保留原列表显示。
+      _collectingFresh = false;
+      _freshFiles = [];
       if (operation == '删除' && _deletionVerificationNames.isNotEmpty) {
         _verifyingDeletion = true;
         message = '正在确认删除结果';
@@ -1719,7 +1741,10 @@ class RecordingBeanController extends ChangeNotifier {
 
   void setPage(int value) {
     pageIndex = value;
-    if (value == 1 && downloadingFileName.isEmpty) {
+    // 切到文件页：只在列表为空（首次进入/重连后）时自动读取一次；
+    // 已有缓存列表时直接展示，需要最新数据用刷新按钮或下拉刷新
+    //（2026-11-20 用户反馈：每次切 tab 都重读一遍太吵）。
+    if (value == 1 && downloadingFileName.isEmpty && files.isEmpty) {
       unawaited(refreshFiles());
     }
     notifyListeners();
