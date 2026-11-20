@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from contextlib import contextmanager
 import sqlite3
 import time
@@ -9,6 +11,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
+
+# AI 筛选/优化环节开关（2026-11-20 用户要求先关闭）。
+# 禁用时：转写完成 → 笔记直接 completed（转写文字即终稿），不进 AI 队列。
+# 恢复：设环境变量 RECORDER_AI_FILTER=1 并重启 scanner/ai-worker。
+def ai_filter_enabled() -> bool:
+    return os.getenv("RECORDER_AI_FILTER", "0") != "0"
 
 try:
     import fcntl
@@ -580,6 +588,16 @@ class JobRepository:
 
     def mark_note_ready(self, job_id: int, raw_note_seconds: float) -> None:
         now = _now()
+        if not ai_filter_enabled():
+            # AI 筛选关闭：转写文字即终稿，直接完成，不进 AI 队列。
+            self.connection.execute(
+                "UPDATE transcription_jobs SET status = 'completed', "
+                "raw_note_seconds = ?, ai_stage = 'skipped', error = '', "
+                "stage_started_at = ?, updated_at = ? WHERE id = ?",
+                (max(0.0, raw_note_seconds), now, now, job_id),
+            )
+            self.connection.commit()
+            return
         self.connection.execute(
             "UPDATE transcription_jobs SET status = 'ai_pending', raw_note_seconds = ?, "
             "ai_stage = 'waiting', error = '', stage_started_at = ?, updated_at = ? WHERE id = ?",

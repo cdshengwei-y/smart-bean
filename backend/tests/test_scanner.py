@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 import wave
 from datetime import datetime, timezone
 from pathlib import Path
+
+# AI 流程测试需要 mark_note_ready 走 ai_pending 队列
+os.environ.setdefault("RECORDER_AI_FILTER", "1")
 
 from app.config import ScannerSettings
 from app.database import JobRepository

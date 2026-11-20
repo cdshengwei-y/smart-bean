@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .config import ScannerSettings
-from .database import JobRepository, StoredTextJob, TranscriptionJob
+from .database import (
+    JobRepository,
+    StoredTextJob,
+    TranscriptionJob,
+    ai_filter_enabled,
+)
 from .service import TranscriptionService
 from .transcription.contract import TranscriptionRequest, TranscriptionResult
 
@@ -456,7 +461,12 @@ class RecordingScanner:
                 model_name=job.transcription_model,
                 metadata={"empty_transcript": "true"} if not job.transcript.strip() else {},
             )
-            markdown = self.transcription_service.pending_markdown(request, result, profile)
+            markdown = self.transcription_service.pending_markdown(
+                request,
+                result,
+                profile,
+                ai_status="completed" if ai_filter_enabled() else "skipped",
+            )
             started = time.monotonic()
             self.store.upload_note(job.note_object_name, markdown)
             synced = self.obsidian_sync.sync_once() if self.obsidian_sync is not None else 0

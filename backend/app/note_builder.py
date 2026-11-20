@@ -35,6 +35,7 @@ def build_markdown(
         "optimizing": "正在优化",
         "filtering": "正在筛选",
         "failed": "处理失败，等待重试",
+        "skipped": "已跳过（AI 筛选关闭）",
         "completed": "已完成",
     }.get(filtered.metadata.get("ai_status", "completed"), "已完成")
 
@@ -46,7 +47,11 @@ def build_markdown(
         "语言: %s" % _yaml_string(language),
         "时长秒: %s" % duration,
         "转写模型: %s" % _yaml_string(result.model_name),
-        "内容筛选模型: %s" % _yaml_string(filtered.model_name),
+        "内容筛选模型: %s" % (
+            "未使用（AI 筛选关闭）"
+            if filtered.model_name == "pending"
+            else _yaml_string(filtered.model_name)
+        ),
         "转写状态: %s" % (transcription_status if result.text.strip() else "未识别到文字"),
         "AI处理状态: %s" % ai_status,
         "文字优化: %s" % ("已开启" if filtered.metadata.get("optimization_enabled") == "true" else "已关闭"),

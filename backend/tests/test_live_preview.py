@@ -235,3 +235,41 @@ class LivePreviewPipelineTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AiFilterDisabledTest(unittest.TestCase):
+    """AI 筛选关闭时：转写完成直接 completed，不进 AI 队列（2026-11-20）。"""
+
+    def test_mark_note_ready_completes_without_ai(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = make_settings(root)
+            repository = JobRepository(settings.database_path)
+            from app.storage.contract import RecordingObject as RecObject
+
+            repository.discover(
+                [
+                    RecObject(
+                        object_name="recordings/bean_x/REC_100.wav",
+                        etag="e",
+                        size=10,
+                        last_modified=datetime.now(timezone.utc),
+                    )
+                ]
+            )
+            job_id = repository.connection.execute(
+                "SELECT id FROM transcription_jobs WHERE object_name = ?",
+                ("recordings/bean_x/REC_100.wav",),
+            ).fetchone()["id"]
+            with patch.dict(os.environ, {"RECORDER_AI_FILTER": "0"}):
+                repository.mark_note_ready(job_id, 0.1)
+                row = repository.connection.execute(
+                    "SELECT status, ai_stage FROM transcription_jobs WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+            self.assertEqual(row["status"], "completed")
+            self.assertEqual(row["ai_stage"], "skipped")
+            repository.close()

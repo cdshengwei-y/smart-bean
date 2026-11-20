@@ -16,7 +16,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app.config import ScannerSettings  # noqa: E402
 from app.content_filter.loader import load_content_filter  # noqa: E402
 from app.content_filter.profile import WorkProfileStore  # noqa: E402
-from app.database import JobRepository, StoredTextJob  # noqa: E402
+from app.database import JobRepository, StoredTextJob, ai_filter_enabled  # noqa: E402
 from app.service import TextProcessingService  # noqa: E402
 from app.storage.contract import RecordingStore  # noqa: E402
 from app.storage.loader import load_recording_store  # noqa: E402
@@ -90,6 +90,10 @@ class AiWorker:
             return False
 
     def run_once(self) -> bool | None:
+        if not ai_filter_enabled():
+            # AI 筛选关闭（2026-11-20 用户要求先停用）：空转即可，
+            # scanner 的 mark_note_ready 会把任务直接置 completed。
+            return None
         job = self.repository.claim_next_ai(self.max_attempts, self.retry_delay_seconds)
         if job is None:
             return None

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
+
+# AI 流程测试需要 AI 队列处于启用状态
+os.environ.setdefault("RECORDER_AI_FILTER", "1")
 
 from app.database import JobRepository
 from app.storage.minio_store import NoteObject, RecordingObject

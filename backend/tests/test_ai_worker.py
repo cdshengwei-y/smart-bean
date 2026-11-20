@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+# AI 流程测试需要 AI 队列处于启用状态
+os.environ.setdefault("RECORDER_AI_FILTER", "1")
 
 from ai_worker import AiWorker
 from app.config import ScannerSettings
