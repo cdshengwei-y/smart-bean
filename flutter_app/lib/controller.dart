@@ -387,6 +387,19 @@ class RecordingBeanController extends ChangeNotifier {
     if (event.name.isNotEmpty) bleDeviceName = event.name;
     bleMessage = event.message;
     if (event.connected) {
+      // 新会话：把后台已有任务全部纳入基线，工作流回到初始状态——
+      // 上次会话的任务不再展示；本次录音产生的新任务不在基线里，
+      // 会正常走完工作流（2026-11-20 用户反馈：重连后仍显示上次状态）。
+      _workflowBaselineJobs =
+          backendStatus?.jobs.map((job) => job.recordingName).toSet() ?? {};
+      workflowFile = '';
+      workflowWritingToTfCard = false;
+      workflowUploadStarted = false;
+      workflowUploadAwaitingConfirmation = false;
+      liveActive = false;
+      livePartial = '';
+      liveSentences = const [];
+      liveText = '';
       _reconnectAttempts = 0;
       _reconnectTimer?.cancel();
       unawaited(
