@@ -209,6 +209,9 @@ constexpr char kSegmentMarker[] = "__s";
 // 边录边传总开关：录音中持续上传已完结的分段副本。
 // 若实测 WiFi 射频干扰麦克风音质，编译时置 0 可整体回退。
 constexpr bool kLiveUploadEnabled = RECORDER_LIVE_UPLOAD != 0;
+// 拉取模式（RECORDER_DISABLE_CLOUD_UPLOAD=1）：设备不上传，WiFi 常连
+// 供 Mac 服务轮询 /files 拉录音与分段。
+constexpr bool kFetcherMode = RECORDER_DISABLE_CLOUD_UPLOAD != 0;
 
 #ifndef RECORDER_LIVE_STREAM_URL
 #define RECORDER_LIVE_STREAM_URL ""
@@ -3231,7 +3234,7 @@ void uploadTask(void *) {
       uploadScanRequested = true;
       bleStatusUpdatePending = true;
     }
-    if (!sdReady || !cloudConfigured()) {
+    if (!sdReady || (!cloudConfigured() && !kFetcherMode)) {
       stopWifiWhenIdle();
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
@@ -3242,6 +3245,13 @@ void uploadTask(void *) {
         liveStreamActive && liveRingAvailable() > 0 &&
         millis() - lastLivePushAt >= kLivePcmPushIntervalMs;
     if (!uploadScanRequested && !livePending) {
+      if (kFetcherMode) {
+        // 拉取模式：Mac 服务轮询设备 /files 拉录音——WiFi 保持连接
+        // （设备自身无上传任务，WiFi 只服务拉取与 OTA）。
+        maintainWifi();
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        continue;
+      }
       // Keep BLE available without scanning the TF card while idle.
       if (wifiAccessLeaseActive()) {
         maintainWifi(true);
