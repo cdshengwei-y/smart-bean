@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 import '../models.dart';
@@ -139,6 +140,7 @@ class BleRecorderService {
     await stopScan();
     await disconnect(notify: false);
     final connectionEpoch = ++_connectionEpoch;
+    final connectStart = DateTime.now();
     _deviceName = candidate.name;
     _connectionController.add(
       BleConnectionEvent(
@@ -160,6 +162,9 @@ class BleRecorderService {
             if (connectionEpoch != _connectionEpoch) return;
             switch (update.connectionState) {
               case DeviceConnectionState.connected:
+                debugPrint(
+                  '[BLE-PERF] gatt connected +${DateTime.now().difference(connectStart).inMilliseconds}ms',
+                );
                 try {
                   await _prepare(candidate.id, connectionEpoch);
                   if (connectionEpoch != _connectionEpoch) return;
@@ -212,8 +217,17 @@ class BleRecorderService {
   }
 
   Future<void> _prepare(String deviceId, int connectionEpoch) async {
+    // 连接耗时打点（2026-11-20）：定位"连上要 5 秒"的分布
+    final prepareStart = DateTime.now();
+    void mark(String stage) {
+      final elapsed = DateTime.now().difference(prepareStart).inMilliseconds;
+      debugPrint('[BLE-PERF] $stage +${elapsed}ms');
+    }
+
+    mark('prepare start');
     if (Platform.isAndroid) {
       final negotiatedMtu = await _ble.requestMtu(deviceId: deviceId, mtu: 185);
+      mark('MTU negotiated=$negotiatedMtu');
       if (negotiatedMtu < 100) {
         throw StateError('蓝牙数据通道长度不足（MTU $negotiatedMtu）');
       }
@@ -248,8 +262,10 @@ class BleRecorderService {
     _control = control;
     _statusSubscription = statusSubscription;
     _filesSubscription = filesSubscription;
+    mark('characteristics subscribed');
     try {
       final initialStatus = await _ble.readCharacteristic(status);
+      mark('initial status read done');
       if (connectionEpoch == _connectionEpoch) _parseStatus(initialStatus);
     } catch (_) {
       if (connectionEpoch == _connectionEpoch) rethrow;
