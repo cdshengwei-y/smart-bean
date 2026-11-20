@@ -635,7 +635,6 @@ class _RecordingBeanHomeState extends State<RecordingBeanHome> {
             children: [
               _ControlPage(controller: controller),
               _FilesPage(controller: controller),
-              _AiSettingsPage(controller: controller),
             ],
           ),
           bottomNavigationBar: NavigationBar(
@@ -652,7 +651,6 @@ class _RecordingBeanHomeState extends State<RecordingBeanHome> {
                 selectedIcon: Icon(Icons.folder_open),
                 label: '录音文件',
               ),
-              NavigationDestination(icon: Icon(Icons.tune), label: '筛选设置'),
             ],
           ),
         );
@@ -2414,16 +2412,6 @@ class _WorkflowPanel extends StatelessWidget {
             ? _WorkflowState.active
             : hasBackendJob || controller.workflowFile.isNotEmpty
             ? _WorkflowState.done
-            : _WorkflowState.waiting,
-      ),
-      _WorkflowStep(
-        '上传',
-        uploadActive
-            ? _WorkflowState.active
-            : hasBackendJob
-            ? _WorkflowState.done
-            : controller.workflowUploadStarted
-            ? _WorkflowState.active
             : _WorkflowState.waiting,
       ),
       _WorkflowStep(
