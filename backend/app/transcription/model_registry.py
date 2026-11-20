@@ -23,10 +23,8 @@ from .custom_config import (
 )
 from .custom_http_adapter import CustomHttpTranscriber
 from .loader import load_transcriber
-from .local_model_adapter import LocalModelTranscriber
 
 
-ZHIPU_GLM_ASR = "zhipu-glm-asr"
 CUSTOM_ASR = "custom-asr"
 CUSTOM_ASR_PREFIX = CUSTOM_ASR + ":"
 LEGACY_QWEN_MODEL_ID = "Qwen3-ASR-1.7B"
@@ -58,14 +56,7 @@ class ModelRegistry:
         self.health_checker = health_checker
 
     def models(self) -> List[AsrModel]:
-        models = [
-            AsrModel(
-                id=ZHIPU_GLM_ASR,
-                name="智谱 GLM-ASR",
-                description="当前局域网 GLM-ASR 服务",
-                configured=bool(os.getenv("ASR_BASE_URL", "http://192.168.0.153:10086").strip()),
-            ),
-        ]
+        models: List[AsrModel] = []
         for config in self._custom_asr_configs():
             if not self._custom_asr_enabled(config):
                 continue
@@ -157,8 +148,12 @@ class ModelRegistry:
                     return custom_models[0]
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
-        default = os.getenv("TRANSCRIPTION_DEFAULT_MODEL", ZHIPU_GLM_ASR).strip()
-        return default if default in configured_ids else ZHIPU_GLM_ASR
+        default = os.getenv("TRANSCRIPTION_DEFAULT_MODEL", "").strip()
+        if default in configured_ids:
+            return default
+        # 兜底：选第一个可用模型（当前部署为千问 custom-asr:default）；没有可用模型时返回空，
+        # build_selected 会给出明确报错。
+        return next(iter(sorted(configured_ids)), "")
 
     def status(self, include_health: bool = False) -> Dict[str, object]:
         selected = self.selected_id()
@@ -235,9 +230,7 @@ class ModelRegistry:
     def _check_model_health(self, model_id: str) -> bool:
         timeout = max(0.5, float(os.getenv("ASR_HEALTH_TIMEOUT_SECONDS", "2.5")))
         try:
-            if model_id == ZHIPU_GLM_ASR:
-                payload = LocalModelTranscriber(timeout_seconds=timeout).health()
-            elif (config := self._custom_config_for_model(model_id)) is not None:
+            if (config := self._custom_config_for_model(model_id)) is not None:
                 transcriber = self._build_custom_transcriber(config)
                 health = getattr(transcriber, "health", None)
                 if not callable(health):
@@ -257,8 +250,6 @@ class ModelRegistry:
     def build_model(self, model_id: str) -> Transcriber:
         """Build a concrete transcriber for a persisted model ID."""
         selected = str(model_id).strip()
-        if selected == ZHIPU_GLM_ASR:
-            return LocalModelTranscriber()
         if (config := self._custom_config_for_model(selected)) is not None:
             return self._build_custom_transcriber(config)
         raise TranscriberError("不支持的转写模型：%s" % selected)

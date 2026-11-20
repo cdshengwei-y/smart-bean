@@ -2712,14 +2712,21 @@ class _BlePanel extends StatelessWidget {
                 width: double.infinity,
                 height: 52,
                 child: FilledButton.icon(
-                  onPressed: controller.bleConnected && !controller.loading
+                  // 连接中也不置灰（2026-11-20 用户反馈：点设备后应直接看到
+                  // 亮色"开始录音"，不要"正在准备录音"灰按钮和亮灰闪烁）。
+                  onPressed: controller.bleConnected
                       ? () => _toggleRecording(context)
                       : null,
                   style: FilledButton.styleFrom(
                     backgroundColor: controller.bleRecording
                         ? danger
                         : Theme.of(context).colorScheme.primary,
-                    foregroundColor: Colors.white,
+                    // 连接中保持亮色外观（只是暂不可点）。
+                    disabledBackgroundColor:
+                        controller.bleRecording
+                        ? danger
+                        : Theme.of(context).colorScheme.primary,
+                    disabledForegroundColor: Colors.white,
                   ),
                   icon: Icon(
                     controller.bleRecording
@@ -2727,11 +2734,7 @@ class _BlePanel extends StatelessWidget {
                         : Icons.mic,
                   ),
                   label: Text(
-                    controller.bleRecording
-                        ? '停止录音'
-                        : controller.bleConnected
-                        ? '开始录音'
-                        : '正在准备录音',
+                    controller.bleRecording ? '停止录音' : '开始录音',
                     style: const TextStyle(fontSize: 17),
                   ),
                 ),

@@ -17,7 +17,7 @@ from app.transcription.custom_config import (
     public_custom_asr_config,
     save_custom_asr_config,
 )
-from app.transcription.model_registry import CUSTOM_ASR_PREFIX, ModelRegistry, ZHIPU_GLM_ASR
+from app.transcription.model_registry import CUSTOM_ASR_PREFIX, ModelRegistry
 from status_server import StatusHandler
 
 
@@ -174,9 +174,14 @@ class CustomAsrConfigTests(unittest.TestCase):
                     delete_response = connection.getresponse()
                     delete_payload = json.loads(delete_response.read())
                     self.assertEqual(delete_response.status, 200)
-                    self.assertEqual(
+                    # 删除当前选中模型后，回退到剩余可用模型（智谱 GLM-ASR 内置项已废弃移除）。
+                    remaining_ids = {
+                        CUSTOM_ASR_PREFIX + entry["id"]
+                        for entry in delete_payload["asr"]["custom_asrs"]
+                    }
+                    self.assertIn(
                         delete_payload["asr"]["selected_model_id"],
-                        ZHIPU_GLM_ASR,
+                        remaining_ids,
                     )
                     self.assertEqual(len(delete_payload["custom_asrs"]), 1)
                 finally:

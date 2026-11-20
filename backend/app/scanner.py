@@ -368,7 +368,7 @@ class RecordingScanner:
             "live-preview",
         )
         print(
-            "LIVE_PREVIEW %s segments=%d" % (base_object, len(texts)),
+            "LIVE_PREVIEW %s segments=%d" % (base_object, len(blocks)),
             flush=True,
         )
 

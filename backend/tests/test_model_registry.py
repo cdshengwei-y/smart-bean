@@ -9,17 +9,19 @@ from unittest.mock import patch
 
 from app.transcription.contract import TranscriptionRequest
 from app.transcription.custom_config import save_custom_asr_config
-from app.transcription.model_registry import CUSTOM_ASR_PREFIX, ModelRegistry, ZHIPU_GLM_ASR
+from app.transcription.model_registry import CUSTOM_ASR_PREFIX, ModelRegistry
 from app.transcription.qwen_asr_adapter import QwenAsrTranscriber
 
 
 class ModelRegistryTests(unittest.TestCase):
-    def test_defaults_to_zhipu_and_persists_selection(self) -> None:
+    def test_zhipu_glm_asr_is_removed_from_builtin_models(self) -> None:
+        """智谱 GLM-ASR 服务已于 2026-11-20 废弃下线（用户要求删除）。"""
         with tempfile.TemporaryDirectory() as directory:
             registry = ModelRegistry(Path(directory) / "asr_model.json")
-            self.assertEqual(registry.selected_id(), ZHIPU_GLM_ASR)
-            registry.select(ZHIPU_GLM_ASR)
-            self.assertEqual(registry.selected_id(), ZHIPU_GLM_ASR)
+            model_ids = {model.id for model in registry.models()}
+            self.assertNotIn("zhipu-glm-asr", model_ids)
+            with self.assertRaisesRegex(ValueError, "不支持的转写模型"):
+                registry.select("zhipu-glm-asr")
 
     def test_qwen_is_not_an_builtin_model(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -28,18 +30,6 @@ class ModelRegistryTests(unittest.TestCase):
             self.assertNotIn("qwen3-asr", model_ids)
             with self.assertRaisesRegex(ValueError, "不支持的转写模型"):
                 registry.select("qwen3-asr")
-
-    def test_status_reports_health_for_builtin_models(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            registry = ModelRegistry(
-                Path(directory) / "asr_model.json",
-                health_checker=lambda model_id: model_id == ZHIPU_GLM_ASR,
-            )
-            status = registry.status(include_health=True)
-
-        models = {model["id"]: model for model in status["models"]}
-        self.assertTrue(models[ZHIPU_GLM_ASR]["healthy"])
-        self.assertNotIn("qwen3-asr", models)
 
     def test_custom_http_model_is_selectable_when_configured(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -64,15 +54,6 @@ class ModelRegistryTests(unittest.TestCase):
         models = {model["id"]: model for model in selected["models"]}
         self.assertEqual(selected["selected_model_id"], model_id)
         self.assertEqual(models[model_id]["name"], "客户 ASR")
-
-    def test_build_model_uses_explicit_persisted_model_id(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            registry = ModelRegistry(Path(directory) / "asr_model.json")
-            with patch("app.transcription.model_registry.LocalModelTranscriber") as transcriber:
-                built = registry.build_model(ZHIPU_GLM_ASR)
-
-        self.assertIs(built, transcriber.return_value)
-        transcriber.assert_called_once_with()
 
     def test_build_model_accepts_legacy_qwen_response_model_name(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

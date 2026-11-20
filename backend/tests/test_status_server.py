@@ -44,8 +44,22 @@ class StatusServerTests(unittest.TestCase):
             repository.close()
 
             with patch(
-                "status_server.ModelRegistry.health_status",
-                return_value={"zhipu-glm-asr": True},
+                "status_server.ModelRegistry.status",
+                return_value={
+                    "selected_model_id": "custom-asr:default",
+                    "custom_asr": {},
+                    "custom_asrs": [],
+                    "models": [
+                        {
+                            "id": "custom-asr:default",
+                            "name": "千问 Qwen3-ASR",
+                            "description": "",
+                            "configured": True,
+                            "selected": True,
+                            "healthy": True,
+                        }
+                    ],
+                },
             ):
                 payload = status_payload(database_path)
 
@@ -57,10 +71,11 @@ class StatusServerTests(unittest.TestCase):
         self.assertEqual(payload["jobs"][0]["job_id"], job.id)
         self.assertEqual(payload["jobs"][0]["ai_attempts"], 0)
         self.assertEqual(payload["jobs"][0]["durations"]["asr"], 0.0)
-        self.assertEqual(payload["asr"]["selected_model_id"], "zhipu-glm-asr")
+        self.assertEqual(payload["asr"]["selected_model_id"], "custom-asr:default")
         self.assertEqual(len(payload["asr"]["models"]), 1)
         models = {model["id"]: model for model in payload["asr"]["models"]}
-        self.assertTrue(models["zhipu-glm-asr"]["healthy"])
+        self.assertTrue(models["custom-asr:default"]["healthy"])
+        self.assertNotIn("zhipu-glm-asr", models)
         self.assertNotIn("qwen3-asr", models)
         self.assertNotIn("transcript", payload["jobs"][0])
         self.assertNotIn("note_object_name", payload["jobs"][0])

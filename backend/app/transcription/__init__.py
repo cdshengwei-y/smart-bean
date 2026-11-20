@@ -8,7 +8,7 @@ from .contract import (
     TranscriptionResult,
     TranscriptionSegment,
 )
-from .model_registry import CUSTOM_ASR, ModelRegistry, ZHIPU_GLM_ASR
+from .model_registry import CUSTOM_ASR, ModelRegistry
 
 __all__ = [
     "Transcriber",
@@ -18,6 +18,5 @@ __all__ = [
     "TranscriptionResult",
     "TranscriptionSegment",
     "ModelRegistry",
-    "ZHIPU_GLM_ASR",
     "CUSTOM_ASR",
 ]
