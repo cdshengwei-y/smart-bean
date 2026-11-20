@@ -91,6 +91,9 @@
 #ifndef RECORDER_WIFI_DIAGNOSTICS
 #define RECORDER_WIFI_DIAGNOSTICS 0
 #endif
+#ifndef RECORDER_DISABLE_CLOUD_UPLOAD
+#define RECORDER_DISABLE_CLOUD_UPLOAD 0
+#endif
 #ifndef RECORDER_SLEEP_IDLE_MS
 #define RECORDER_SLEEP_IDLE_MS (2UL * 60UL * 1000UL)
 #endif
@@ -639,6 +642,23 @@ bool applyStorageJson(JsonDocument &document, RuntimeCloudStorageConfig &candida
 }
 
 void loadRuntimeCloudStorage() {
+#if RECORDER_DISABLE_CLOUD_UPLOAD
+  // 拉取式架构（2026-11-20）：录音豆只管录音，Mac 服务从 TF 卡拉取录音
+  // 与分段并写云端存储。设备不再自行上传（uploadTask 空转），恢复热点、
+  // OTA 与 WiFi 拉取连接不受影响。忽略 preferences 里已保存的云配置。
+  runtimeCloudStorage.provider = "none";
+  runtimeCloudStorage.endpoint = "";
+  runtimeCloudStorage.region = "";
+  runtimeCloudStorage.bucket = "";
+  runtimeCloudStorage.accessKey = "";
+  runtimeCloudStorage.secretKey = "";
+  runtimeCloudStorage.tlsCaCert = "";
+  runtimeCloudStorage.recordingsPrefix = "recordings/";
+  runtimeCloudStorage.revision = 0;
+  cloudConfigStatus = "fetcher_mode";
+  Serial.println("Cloud upload disabled: fetcher mode (service pulls from device)");
+  return;
+#endif
   runtimeCloudStorage.provider = "minio";
   runtimeCloudStorage.endpoint = String(RECORDER_MINIO_ENDPOINT);
   runtimeCloudStorage.region = String(RECORDER_MINIO_REGION);

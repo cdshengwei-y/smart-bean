@@ -1762,6 +1762,37 @@ class StatusHandler(BaseHTTPRequestHandler):
         print("status-api %s" % (format % args), flush=True)
 
 
+def start_device_fetcher() -> None:
+    """启动录音豆拉取器后台线程（从设备 TF 卡拉取录音与分段）。
+
+    拉取式架构（2026-11-20）：设备不再自行上传，本服务轮询设备
+    /files 拉新录音/分段到本地归档，scanner 归档发现链路自动转写。
+    未配置 RECORDER_DEVICE_BASE_URL 时静默不启动。
+    """
+    from app import fetcher
+
+    # 默认设备 mDNS 主机名（固件 startMdns 注册），可被 env 覆盖
+    base_url = os.getenv(
+        "RECORDER_DEVICE_BASE_URL", "http://ai-recorder-bean-ye-2.local"
+    ).strip()
+    if not base_url:
+        print("Device fetcher disabled (empty base url)", flush=True)
+        return
+    device_id = os.getenv("RECORDER_DEVICE_ID", "bean_ye_2").strip() or "bean_ye_2"
+    settings = ScannerSettings.load()
+    fetcher_instance = fetcher.DeviceFetcher(
+        settings,
+        device_base_url=base_url,
+        device_id=device_id,
+        poll_interval_seconds=float(os.getenv("RECORDER_FETCH_INTERVAL", "10")),
+    )
+    threading.Thread(
+        target=fetcher_instance.run_forever,
+        name="device-fetcher",
+        daemon=True,
+    ).start()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Serve transcription status and ASR selection over the LAN")
     parser.add_argument("--host", default="0.0.0.0")
@@ -1774,6 +1805,7 @@ def main() -> int:
     StatusHandler.model_config_path = args.model_config.expanduser()
     StatusHandler.profile_store = WorkProfileStore(StatusHandler.database_path.with_name("work_profiles.json"))
     StatusHandler.admin_password = _load_admin_password()
+    start_device_fetcher()
     server = ThreadingHTTPServer((args.host, args.port), StatusHandler)
     print("Transcription status API: http://%s:%d/api/status" % (args.host, args.port), flush=True)
     try:
