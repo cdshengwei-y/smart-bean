@@ -75,6 +75,7 @@ class RecordingBeanController extends ChangeNotifier {
   String address = '';
   bool connected = false;
   bool loading = false;
+  bool _recordingCommandInFlight = false;
   DeviceStatus status = const DeviceStatus();
   List<RecordingFile> files = [];
   // 后台重读的收集缓冲：读取期间界面继续显示旧列表，读完原子替换——
@@ -569,6 +570,9 @@ class RecordingBeanController extends ChangeNotifier {
   }
 
   Future<void> toggleRecording() async {
+    // 连点防抖（2026-11-20 审计）：命令在途时忽略重复点击，避免双击
+    // 发两次 START/STOP 造成设备状态错乱。
+    if (_recordingCommandInFlight) return;
     if (!bleConnected) {
       bleMessage = '请先连接录音豆';
       notifyListeners();
@@ -577,6 +581,16 @@ class RecordingBeanController extends ChangeNotifier {
     final command = bleRecording
         ? 'STOP'
         : 'START:${DateTime.now().millisecondsSinceEpoch ~/ 1000}';
+    _recordingCommandInFlight = true;
+    try {
+      await _sendRecordingCommand(command);
+    } finally {
+      _recordingCommandInFlight = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _sendRecordingCommand(String command) async {
     final sent = await _ble.send(command);
     if (!sent) {
       bleConnected = false;
