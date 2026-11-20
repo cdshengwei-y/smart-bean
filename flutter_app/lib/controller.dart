@@ -405,6 +405,18 @@ class RecordingBeanController extends ChangeNotifier {
       unawaited(
         _ble.send('TIME:${DateTime.now().millisecondsSinceEpoch ~/ 1000}'),
       );
+      // 连接性能打点上报（fire-and-forget，仅供后台日志分析）
+      if (_ble.lastPerfTrace.isNotEmpty) {
+        try {
+          final perfBase = _api.normalizeAddress(
+            backendStatusAddress,
+            statusService: true,
+          );
+          unawaited(_api.postPerf(perfBase, List.of(_ble.lastPerfTrace)));
+        } catch (_) {
+          // 上报失败不影响连接
+        }
+      }
       unawaited(refreshFiles());
       unawaited(checkUnifiedRelease());
     } else if (!event.message.startsWith('正在')) {

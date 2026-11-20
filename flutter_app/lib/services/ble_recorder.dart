@@ -69,6 +69,9 @@ class BleRecorderService {
   BleRecorderService({FlutterReactiveBle? ble})
     : _ble = ble ?? FlutterReactiveBle();
 
+  /// 最近一次连接的阶段耗时打点（JSON 行），供后端 /perf 分析
+  List<String> lastPerfTrace = [];
+
   static final serviceUuid = Uuid.parse('d3b10000-8a1f-4e23-9d46-5e6d0f434f01');
   static final controlUuid = Uuid.parse('d3b10001-8a1f-4e23-9d46-5e6d0f434f01');
   static final statusUuid = Uuid.parse('d3b10002-8a1f-4e23-9d46-5e6d0f434f01');
@@ -162,6 +165,9 @@ class BleRecorderService {
             if (connectionEpoch != _connectionEpoch) return;
             switch (update.connectionState) {
               case DeviceConnectionState.connected:
+                lastPerfTrace.add(
+                  '{"stage": "gatt connected", "elapsed_ms": ${DateTime.now().difference(connectStart).inMilliseconds}}',
+                );
                 debugPrint(
                   '[BLE-PERF] gatt connected +${DateTime.now().difference(connectStart).inMilliseconds}ms',
                 );
@@ -217,10 +223,12 @@ class BleRecorderService {
   }
 
   Future<void> _prepare(String deviceId, int connectionEpoch) async {
-    // 连接耗时打点（2026-11-20）：定位"连上要 5 秒"的分布
+    // 连接耗时打点（2026-11-20）：定位"连上要 5 秒"的分布。
+    // 打点存入 lastPerfTrace，连接完成后由 controller 经后端 /perf 上报。
     final prepareStart = DateTime.now();
     void mark(String stage) {
       final elapsed = DateTime.now().difference(prepareStart).inMilliseconds;
+      lastPerfTrace.add('{"stage": "$stage", "elapsed_ms": $elapsed}');
       debugPrint('[BLE-PERF] $stage +${elapsed}ms');
     }
 

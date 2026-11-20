@@ -48,6 +48,17 @@ class DeviceApi {
         },
       );
 
+  /// BLE 连接性能打点上报（后端仅记录日志）。
+  Future<void> postPerf(Uri base, List<String> traceLines) async {
+    final payload = '{"trace": [${traceLines.join(",")}]}';
+    await _jsonRequest(
+      base,
+      'POST',
+      '/perf',
+      body: jsonDecode(payload) as Map<String, dynamic>,
+    );
+  }
+
   Future<void> setClock(Uri base) async {
     await _jsonRequest(
       base,
