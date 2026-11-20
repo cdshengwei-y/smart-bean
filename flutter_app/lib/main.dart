@@ -4027,7 +4027,9 @@ class _TranscriptionPanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            if (available.isNotEmpty)
+            // 只有一个可用服务时不需要下拉框（没有可切换的对象），
+            // 直接展示下方带健康状态的服务行即可。
+            if (available.length > 1)
               DropdownButtonFormField<String>(
                 key: ValueKey(asr?.selectedModelId),
                 initialValue:
@@ -4058,7 +4060,7 @@ class _TranscriptionPanel extends StatelessWidget {
                   if (model != null) controller.selectBackendModel(model);
                 },
               ),
-            if (available.isNotEmpty) const SizedBox(height: 8),
+            if (available.length > 1) const SizedBox(height: 8),
             for (final model in available)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),

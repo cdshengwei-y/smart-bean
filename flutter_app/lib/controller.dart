@@ -1543,6 +1543,9 @@ class RecordingBeanController extends ChangeNotifier {
       asr: asr,
       customAsr: current?.customAsr ?? const CustomAsrConfig(),
       customAsrs: current?.customAsrs ?? const [],
+      // 保留 AI 筛选开关状态——漏传会回退默认 true，工作流会短暂露出
+      // 已停用的"AI处理"步骤（2026-11-20 用户反馈）。
+      aiFilterEnabled: current?.aiFilterEnabled ?? true,
     );
     await _preferences?.setString('transcription_model', asr.selectedModelId);
   }
