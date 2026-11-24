@@ -1,0 +1,47 @@
+# 连接并录一段（mutates-recordings）：查找→连设备→开始录音→停止录音。
+# 产生一段约 10 秒的真实录音，会走完整后端链路（拉取/转写/出字）。
+# MIUI + Flutter 实测坑（2026-11-23/24）：
+#   - tapOn/when.visible 等文本匹配会触发 Maestro 画面稳定等待，
+#     遇到扫描/录音中的无限转圈 spinner 会永久卡死（timeout 都不生效）
+#     → 点按全部用坐标 point；条件分支只用 when.true（纯表达式，
+#     不触碰 UI，不受 settle 影响）。
+#   - APP 冷启动可能 BLE 自动重连（已连接态无"查找"按钮）→ 由
+#     run_smoke.sh 截屏像素判定后传入 PRECONNECTED=true/false。
+#   - 坐标基于 1080x2400（Redmi onyx），控制页布局固定所以可复用。
+appId: com.aibean.controller
+name: 连接录音豆并录一段
+---
+- launchApp:
+    clearState: false
+    stopApp: false
+- waitForAnimationToEnd:
+    timeout: 3000
+# 未连接起点：点查找→等扫描结果→点设备连接
+- runFlow:
+    when:
+      true: ${PRECONNECTED} == "false"
+    commands:
+      # 点查找开始 BLE 扫描（按钮在"未连接录音豆"卡片右侧）
+      - tapOn:
+          point: "87%, 30%"
+      # 扫描结果出现需要几秒，纯等待（不做文本断言避免 settle 卡死）
+      - waitForAnimationToEnd:
+          timeout: 10000
+      # 点设备列表第一项（查找按钮下方）
+      - tapOn:
+          point: "50%, 36%"
+      # BLE 连接握手 ~2s
+      - waitForAnimationToEnd:
+          timeout: 8000
+# 此时必然已连接：开始录音按钮（已连接卡片内全宽按钮，垂直约 36%）
+- tapOn:
+    point: "50%, 36%"
+# 录 10 秒（保证一段真实录音落卡）
+- waitForAnimationToEnd:
+    timeout: 10000
+# 停止录音
+- tapOn:
+    point: "50%, 36%"
+# 回到空闲态，给工作流卡片留出状态刷新时间
+- waitForAnimationToEnd:
+    timeout: 10000

@@ -1,0 +1,56 @@
+{
+  "app_id": "com.aibean.controller",
+  "note": "选择器契约：每个选择器必须真实出现在源码中（main.dart 等）。文本选择器对应 UI 可见文案。",
+  "selectors": {
+    "tab_control": {
+      "type": "text",
+      "value": "控制",
+      "source": "flutter_app/lib/main.dart (_ControlPage bottom nav)"
+    },
+    "tab_files": {
+      "type": "text",
+      "value": "录音文件",
+      "source": "flutter_app/lib/main.dart (bottom nav)"
+    },
+    "find_button": {
+      "type": "text",
+      "value": "查找",
+      "source": "flutter_app/lib/main.dart (_ControlPage FilledButton '查找')"
+    },
+    "device_button": {
+      "type": "text_regex",
+      "value": "Recording Bean.*|bean_ye.*",
+      "source": "flutter_app/lib/main.dart (_DeviceButton，设备名去除 AI Recording Bean 前缀)"
+    },
+    "record_start": {
+      "type": "text",
+      "value": "开始录音",
+      "source": "flutter_app/lib/main.dart (录音按钮)"
+    },
+    "record_stop": {
+      "type": "text",
+      "value": "停止录音",
+      "source": "flutter_app/lib/main.dart (录音按钮)"
+    },
+    "more_button": {
+      "type": "text",
+      "value": "更多",
+      "source": "flutter_app/lib/main.dart (控制页 actions)"
+    },
+    "workflow_step_transcribe": {
+      "type": "text",
+      "value": "转写",
+      "source": "flutter_app/lib/main.dart (_WorkflowPanel 步骤)"
+    },
+    "files_empty": {
+      "type": "text",
+      "value": "暂无录音文件",
+      "source": "flutter_app/lib/main.dart (_EmptyFiles)"
+    }
+  },
+  "journeys": [
+    "01_cold_start.yaml — 冷启动：App 打开、控制页可达",
+    "02_connect_and_record.yaml — 连接并录一段：查找→连设备→开始→停止（产生真实录音，mutates-recordings）",
+    "03_files_page.yaml — 文件页：切 tab、列表/空态可达（readonly）"
+  ]
+}

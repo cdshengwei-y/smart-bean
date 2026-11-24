@@ -640,15 +640,28 @@ class _RecordingBeanHomeState extends State<RecordingBeanHome> {
           bottomNavigationBar: NavigationBar(
             selectedIndex: controller.pageIndex,
             onDestinationSelected: controller.setPage,
-            destinations: const [
+            destinations: [
+              // Semantics identifier 冒烟测试选择器（Android resource-id）。
               NavigationDestination(
-                icon: Icon(Icons.mic_outlined),
-                selectedIcon: Icon(Icons.mic),
+                icon: Semantics(
+                  identifier: 'tab_control',
+                  child: const Icon(Icons.mic_outlined),
+                ),
+                selectedIcon: Semantics(
+                  identifier: 'tab_control',
+                  child: const Icon(Icons.mic),
+                ),
                 label: '控制',
               ),
               NavigationDestination(
-                icon: Icon(Icons.folder_open_outlined),
-                selectedIcon: Icon(Icons.folder_open),
+                icon: Semantics(
+                  identifier: 'tab_files',
+                  child: const Icon(Icons.folder_open_outlined),
+                ),
+                selectedIcon: Semantics(
+                  identifier: 'tab_files',
+                  child: const Icon(Icons.folder_open),
+                ),
                 label: '录音文件',
               ),
             ],
@@ -2528,15 +2541,17 @@ class _WorkflowPanel extends StatelessWidget {
                   100 ~/
                   controller.bleUploadTotalBytes)
               .clamp(0, 100);
-      return '正在上传录音：$percent%';
+      return '正在处理录音：$percent%';
     }
-    if (controller.bleUploading) return '正在上传录音';
+    if (controller.bleUploading) return '正在处理录音';
     if (job == null) {
-      if (uploadActive || controller.workflowUploadStarted) return '正在上传录音';
+      if (uploadActive || controller.workflowUploadStarted) {
+        return '录音已保存，等待转写';
+      }
       return controller.bleConnected ? '等待开始录音' : '等待连接录音豆';
     }
     return switch (job.status) {
-      'pending' => '上传完成，等待转写',
+      'pending' => '等待转写录音',
       'processing' || 'transcribing' => '正在转写录音${_elapsedText(job)}',
       'failed' || 'transcription_failed' => '录音转写失败，等待自动重试',
       'missing' => '云端录音已不存在，无法转写',

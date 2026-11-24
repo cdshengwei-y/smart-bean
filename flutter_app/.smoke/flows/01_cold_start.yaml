@@ -1,0 +1,17 @@
+# 冷启动冒烟：App 打开、控制页核心元素可达、无崩溃。
+# 注意：APP 冷启动会 BLE 自动重连上次设备——已连接态没有"查找"按钮，
+# 未连接态才是。所以这里只断言两种状态共有的元素（tab 栏与"更多"）。
+appId: com.aibean.controller
+name: 冷启动与控制页可达
+---
+- launchApp:
+    clearState: false
+    stopApp: false  # force-stop 会触发 MIUI 杀进程窗口，改温和启动
+- waitForAnimationToEnd:
+    timeout: 8000
+- assertVisible:
+    text: "更多"
+- assertVisible:
+    id: "tab_files"
+- assertVisible:
+    id: "tab_control"

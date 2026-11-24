@@ -1012,10 +1012,10 @@ class RecordingBeanController extends ChangeNotifier {
       status = await _api.status(_api.normalizeAddress(address));
       connected = true;
       message = status.recording
-          ? '正在录音，停止后将自动上传'
+          ? '正在录音，停止后将自动转写'
           : status.uploadInProgress
-          ? '正在上传录音'
-          : '录音会自动上传、转写并生成笔记';
+          ? '正在处理录音'
+          : '录音会自动转写并生成笔记';
     } catch (_) {
       if (!silent) message = '设备不可达，正在等待重连';
       connected = false;
@@ -1746,7 +1746,7 @@ class RecordingBeanController extends ChangeNotifier {
     if (status == 'manifest_failed') return '无法读取更新清单';
     if (status == 'manifest_invalid') return '更新清单无效';
     if (status == 'not_configured') return '设备未配置 OTA 地址';
-    if (status == 'busy') return '设备正在录音或上传';
+    if (status == 'busy') return '设备正在录音';
     if (status.startsWith('update_failed_')) {
       return '设备下载或写入失败（${status.substring('update_failed_'.length)}）';
     }

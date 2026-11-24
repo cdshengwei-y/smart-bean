@@ -1,0 +1,25 @@
+# 文件页只读冒烟：切 tab、列表条目可见（依赖 02 号旅程已产出录音）、回控制页。
+appId: com.aibean.controller
+name: 录音文件页可达
+---
+- launchApp:
+    clearState: false
+    stopApp: false  # force-stop 会触发 MIUI 杀进程窗口，改温和启动
+- extendedWaitUntil:
+    visible:
+      text: "查找"
+    timeout: 8000
+- tapOn:
+    id: "tab_files"
+# 02 号旅程已产出真实录音：文件列表应包含 REC_ 条目
+- extendedWaitUntil:
+    visible:
+      text: "REC_.*"
+    timeout: 10000
+# 回到控制页
+- tapOn:
+    id: "tab_control"
+- extendedWaitUntil:
+    visible:
+      text: "查找"
+    timeout: 5000
