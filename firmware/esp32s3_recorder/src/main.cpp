@@ -3286,6 +3286,16 @@ void uploadTask(void *) {
     } else if (!uploadScanRequested) {
       continue;
     }
+    if (kFetcherMode) {
+      // 拉取模式：设备永不上传（Mac 拉取器负责归档）。uploadScanRequested
+      // 在录音结束/配置变更后会被置位，若不在此挡住，设备会把 TF 卡里的
+      // 旧录音全部推给 MinIO，且 BLE 上报 uploading=1 + 旧文件名，
+      // 把 APP 工作流搅成"没录音却显示录音中"（2026-11-24 用户反馈）。
+      uploadScanRequested = false;
+      maintainWifi();
+      vTaskDelay(pdMS_TO_TICKS(2000));
+      continue;
+    }
     sdLock();
     const bool liveWhileRecording = kLiveUploadEnabled && recording;
     const String pendingName = findNextPendingRecording(liveWhileRecording);

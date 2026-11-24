@@ -2374,9 +2374,14 @@ class _WorkflowPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final job = controller.displayWorkflowJob;
     final status = job?.status ?? '';
-    final uploadActive = controller.bleConnected
-        ? controller.bleUploading
-        : controller.connected && controller.status.uploadInProgress;
+    // 会话门卫（UI 层兜底）：本次会话没开始过录音时，
+    // 任何后台任务/标志位都不允许点亮工作流进度。
+    final sessionStarted = controller.workflowSessionStarted;
+    final uploadActive =
+        sessionStarted &&
+        (controller.bleConnected
+            ? controller.bleUploading
+            : controller.connected && controller.status.uploadInProgress);
     final hasBackendJob = job != null;
     final transcriptionFailed = const {
       'failed',
@@ -2423,7 +2428,8 @@ class _WorkflowPanel extends StatelessWidget {
         '录音',
         controller.bleRecording
             ? _WorkflowState.active
-            : hasBackendJob || controller.workflowFile.isNotEmpty
+            : sessionStarted &&
+                  (hasBackendJob || controller.workflowFile.isNotEmpty)
             ? _WorkflowState.done
             : _WorkflowState.waiting,
       ),
@@ -2433,10 +2439,12 @@ class _WorkflowPanel extends StatelessWidget {
             ? _WorkflowState.failed
             : transcriptionDone
             ? _WorkflowState.done
-            : transcriptionActive ||
-                  // 录音刚保存、任务还没进后台队列时也算转写中（ASR 在线即转）
-                  (job == null &&
-                      (uploadActive || controller.workflowUploadStarted))
+            : sessionStarted &&
+                  (transcriptionActive ||
+                      // 录音刚保存、任务还没进后台队列时也算转写中（ASR 在线即转）
+                      (job == null &&
+                          (uploadActive ||
+                              controller.workflowUploadStarted)))
             ? _WorkflowState.active
             : _WorkflowState.waiting,
       ),
@@ -2548,10 +2556,15 @@ class _WorkflowPanel extends StatelessWidget {
     }
     if (controller.bleUploading) return '正在处理录音';
     if (job == null) {
-      if (uploadActive || controller.workflowUploadStarted) {
+      if (controller.workflowSessionStarted &&
+          (uploadActive || controller.workflowUploadStarted)) {
         return '录音已保存，正在转写';
       }
-      return controller.bleConnected ? '等待开始录音' : '等待连接录音豆';
+      return controller.bleRecording
+          ? '正在录音：${_formatDuration(controller.bleRecordingSeconds)}'
+          : controller.bleConnected
+          ? '等待开始录音'
+          : '等待连接录音豆';
     }
     return switch (job.status) {
       'pending' => '正在转写录音${_elapsedText(job)}',

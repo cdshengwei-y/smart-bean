@@ -178,6 +178,36 @@ class RecordingBeanController extends ChangeNotifier {
   // 严禁把后台历史任务误认领成本会话进度（2026-11-24 用户反馈）。
   bool _workflowSessionStarted = false;
 
+  /// 工作流 UI 同样以此为准：会话未开始时任何标志位都不该点亮进度。
+  bool get workflowSessionStarted => _workflowSessionStarted;
+
+  String _lastWfSignature = '';
+
+  /// 工作流状态跳变经 /perf 上报到后台日志（监视通道，
+  /// HyperOS release 包 logcat 静音，只能走这个渠道远程观测）。
+  void _reportWorkflowState(String event) {
+    final signature =
+        'session=$_workflowSessionStarted rec=$bleRecording '
+        'wtc=$workflowWritingToTfCard wus=$workflowUploadStarted '
+        'wac=$workflowUploadAwaitingConfirmation file=$workflowFile';
+    final changed = signature != _lastWfSignature;
+    _lastWfSignature = signature;
+    if (!changed && event == 'status') return;
+    try {
+      final base = _api.normalizeAddress(
+        backendStatusAddress,
+        statusService: true,
+      );
+      unawaited(
+        _api.postPerf(base, [
+          jsonEncode(
+            'WF event=$event $signature jobs=${backendStatus?.jobs.length ?? 0}',
+          ),
+        ]),
+      );
+    } catch (_) {}
+  }
+
   TranscriptionJobStatus? get workflowJob => _findWorkflowJob(backendStatus);
   TranscriptionJobStatus? get displayWorkflowJob => workflowJob;
 
@@ -406,6 +436,9 @@ class RecordingBeanController extends ChangeNotifier {
       workflowUploadStarted = false;
       workflowUploadAwaitingConfirmation = false;
       _workflowSessionStarted = false;
+      _lastWfSignature = '';
+      debugPrint('[WF] session reset on connect');
+      _reportWorkflowState('reset-connect');
       liveActive = false;
       livePartial = '';
       liveSentences = const [];
@@ -517,6 +550,11 @@ class RecordingBeanController extends ChangeNotifier {
 
     if (_workflowSessionStarted &&
         value.file.isNotEmpty &&
+        // 本会话文件一经确定就锁定：设备端幽灵上传（旧固件 bug）会短暂
+        // 上报别的文件名（如历史分段），绝不允许覆盖本会话的录音名。
+        (workflowFile.isEmpty ||
+            value.file == workflowFile ||
+            value.file.startsWith(workflowFile)) &&
         (value.recording ||
             value.uploading ||
             wasRecording ||
@@ -531,20 +569,28 @@ class RecordingBeanController extends ChangeNotifier {
     }
     if (value.recording) {
       // 设备在录即视为本会话已开始（覆盖重连后直接看到在录的场景）。
+      if (!_workflowSessionStarted) {
+        debugPrint('[WF] session start: device reports recording');
+        _reportWorkflowState('start-device-recording');
+      }
       _workflowSessionStarted = true;
       workflowWritingToTfCard = false;
       workflowUploadStarted = false;
       workflowUploadAwaitingConfirmation = false;
     }
-    if (value.uploading) {
+    if (value.uploading && _workflowSessionStarted) {
       workflowWritingToTfCard = false;
       workflowUploadStarted = true;
       workflowUploadAwaitingConfirmation = false;
-    } else if (wasUploading) {
+    } else if (wasUploading &&
+        !value.uploading &&
+        _workflowSessionStarted &&
+        !value.recording) {
       workflowUploadStarted = true;
       workflowUploadAwaitingConfirmation = true;
       unawaited(refreshBackendStatus());
     }
+    _reportWorkflowState('status');
     if (_pendingDownload != null && _validIpv4(value.wifiAddress)) {
       final pending = _pendingDownload!;
       _pendingDownload = null;
@@ -619,6 +665,8 @@ class RecordingBeanController extends ChangeNotifier {
         _lastBleStatusSeconds = 0;
         _lastBleStatusAt = DateTime.now();
         _workflowSessionStarted = true;
+        debugPrint('[WF] session start: user pressed record');
+        _reportWorkflowState('start-user-record');
         _workflowBaselineJobs =
             backendStatus?.jobs.map((job) => job.recordingName).toSet() ?? {};
         workflowFile = '';
@@ -653,6 +701,9 @@ class RecordingBeanController extends ChangeNotifier {
     workflowUploadStarted = false;
     workflowUploadAwaitingConfirmation = false;
     _workflowSessionStarted = false;
+    debugPrint('[WF] session reset on disconnect/ble-reset');
+    _lastWfSignature = '';
+    _reportWorkflowState('reset-disconnect');
     _workflowBaselineJobs = {};
     if (!connected) _clearCachedDeviceFiles();
   }
@@ -1126,6 +1177,11 @@ class RecordingBeanController extends ChangeNotifier {
           ? _findWorkflowJob(refreshedStatus)
           : null;
       if (job != null) {
+        debugPrint(
+          '[WF] adopt job ${job.recordingName} status=${job.status} '
+          'session=$_workflowSessionStarted',
+        );
+        _reportWorkflowState('adopt-job status=${job.status}');
         workflowFile = job.recordingName;
         workflowWritingToTfCard = false;
         workflowUploadStarted = true;
