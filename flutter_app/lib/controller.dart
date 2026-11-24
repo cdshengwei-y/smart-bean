@@ -173,6 +173,10 @@ class RecordingBeanController extends ChangeNotifier {
   bool workflowWritingToTfCard = false;
   bool workflowUploadStarted = false;
   bool workflowUploadAwaitingConfirmation = false;
+  // 本次会话是否真的开始过录音（用户点开始或设备上报在录）。
+  // 工作流进度只认这个门卫：刚连上/重连后必须是初始状态，
+  // 严禁把后台历史任务误认领成本会话进度（2026-11-24 用户反馈）。
+  bool _workflowSessionStarted = false;
 
   TranscriptionJobStatus? get workflowJob => _findWorkflowJob(backendStatus);
   TranscriptionJobStatus? get displayWorkflowJob => workflowJob;
@@ -401,6 +405,7 @@ class RecordingBeanController extends ChangeNotifier {
       workflowWritingToTfCard = false;
       workflowUploadStarted = false;
       workflowUploadAwaitingConfirmation = false;
+      _workflowSessionStarted = false;
       liveActive = false;
       livePartial = '';
       liveSentences = const [];
@@ -510,7 +515,8 @@ class RecordingBeanController extends ChangeNotifier {
       }
     }
 
-    if (value.file.isNotEmpty &&
+    if (_workflowSessionStarted &&
+        value.file.isNotEmpty &&
         (value.recording ||
             value.uploading ||
             wasRecording ||
@@ -520,8 +526,12 @@ class RecordingBeanController extends ChangeNotifier {
             workflowUploadAwaitingConfirmation)) {
       workflowFile = value.file;
     }
-    if (wasRecording && !value.recording) workflowWritingToTfCard = true;
+    if (_workflowSessionStarted && wasRecording && !value.recording) {
+      workflowWritingToTfCard = true;
+    }
     if (value.recording) {
+      // 设备在录即视为本会话已开始（覆盖重连后直接看到在录的场景）。
+      _workflowSessionStarted = true;
       workflowWritingToTfCard = false;
       workflowUploadStarted = false;
       workflowUploadAwaitingConfirmation = false;
@@ -608,6 +618,7 @@ class RecordingBeanController extends ChangeNotifier {
         bleCurrentFile = '';
         _lastBleStatusSeconds = 0;
         _lastBleStatusAt = DateTime.now();
+        _workflowSessionStarted = true;
         _workflowBaselineJobs =
             backendStatus?.jobs.map((job) => job.recordingName).toSet() ?? {};
         workflowFile = '';
@@ -641,6 +652,7 @@ class RecordingBeanController extends ChangeNotifier {
     workflowWritingToTfCard = false;
     workflowUploadStarted = false;
     workflowUploadAwaitingConfirmation = false;
+    _workflowSessionStarted = false;
     _workflowBaselineJobs = {};
     if (!connected) _clearCachedDeviceFiles();
   }
@@ -1108,7 +1120,11 @@ class RecordingBeanController extends ChangeNotifier {
       backendStatus = refreshedStatus;
       customAsrConfig = refreshedStatus.customAsr;
       customAsrConfigs = refreshedStatus.customAsrs;
-      final job = _findWorkflowJob(refreshedStatus);
+      // 只在本会话真的开始过录音时才认领任务进度；
+      // 刚连上时后台的历史任务一律不进工作流（2026-11-24 用户反馈）。
+      final job = _workflowSessionStarted
+          ? _findWorkflowJob(refreshedStatus)
+          : null;
       if (job != null) {
         workflowFile = job.recordingName;
         workflowWritingToTfCard = false;

@@ -2433,7 +2433,10 @@ class _WorkflowPanel extends StatelessWidget {
             ? _WorkflowState.failed
             : transcriptionDone
             ? _WorkflowState.done
-            : transcriptionActive
+            : transcriptionActive ||
+                  // 录音刚保存、任务还没进后台队列时也算转写中（ASR 在线即转）
+                  (job == null &&
+                      (uploadActive || controller.workflowUploadStarted))
             ? _WorkflowState.active
             : _WorkflowState.waiting,
       ),
@@ -2546,12 +2549,12 @@ class _WorkflowPanel extends StatelessWidget {
     if (controller.bleUploading) return '正在处理录音';
     if (job == null) {
       if (uploadActive || controller.workflowUploadStarted) {
-        return '录音已保存，等待转写';
+        return '录音已保存，正在转写';
       }
       return controller.bleConnected ? '等待开始录音' : '等待连接录音豆';
     }
     return switch (job.status) {
-      'pending' => '等待转写录音',
+      'pending' => '正在转写录音${_elapsedText(job)}',
       'processing' || 'transcribing' => '正在转写录音${_elapsedText(job)}',
       'failed' || 'transcription_failed' => '录音转写失败，等待自动重试',
       'missing' => '云端录音已不存在，无法转写',
