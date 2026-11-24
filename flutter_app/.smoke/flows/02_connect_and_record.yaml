@@ -10,6 +10,9 @@
 #   - 坐标基于 1080x2400（Redmi onyx），控制页布局固定所以可复用。
 appId: com.aibean.controller
 name: 连接录音豆并录一段
+# BLE 闪断/自动重连会让工作流卡片周期性刷新，Maestro 点按前的
+# "等 UI 空闲"默认无限等待 → 全局压到 2 秒。
+waitForIdleTimeout: 2000
 ---
 - launchApp:
     clearState: false
@@ -17,9 +20,11 @@ name: 连接录音豆并录一段
 - waitForAnimationToEnd:
     timeout: 3000
 # 未连接起点：点查找→等扫描结果→点设备连接
+# 注意：Maestro 条件必须把整个表达式放进 ${}，写成 ${VAR} == "x"
+# 会变成"替换后字符串"恒为真（2026-11-24 实测踩坑）。
 - runFlow:
     when:
-      true: ${PRECONNECTED} == "false"
+      true: ${PRECONNECTED == "false"}
     commands:
       # 点查找开始 BLE 扫描（按钮在"未连接录音豆"卡片右侧）
       - tapOn:
