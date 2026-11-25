@@ -220,6 +220,11 @@ constexpr bool kFetcherMode = RECORDER_DISABLE_CLOUD_UPLOAD != 0;
 // 流式引擎。URL 为空则整体关闭；关闭时仅靠 60s 分段兜底出字。
 constexpr char kLiveStreamUrl[] = RECORDER_LIVE_STREAM_URL;
 constexpr bool kLiveStreamEnabled = sizeof(kLiveStreamUrl) > 1;
+// 后端通知（拉取模式）：URL 空 = 不通知（纯轮询兜底仍在）
+constexpr char kBackendNotifyUrl[] = RECORDER_BACKEND_NOTIFY_URL;
+constexpr bool kBackendNotifyEnabled = sizeof(kBackendNotifyUrl) > 1;
+volatile bool backendNotifyPending = false;
+String backendNotifyName;
 constexpr uint32_t kLivePcmPushIntervalMs = 2000;
 constexpr size_t kLiveRingBytes = 96 * 1024;  // ~3 秒 16k s16le PCM
 
@@ -1903,6 +1908,8 @@ bool finalizeSegmentFile() {
   Serial.printf("SEGMENT_READY %s bytes=%lu\n", finalName.c_str(),
                 static_cast<unsigned long>(dataSize));
   uploadScanRequested = true;
+  backendNotifyPending = true;
+  backendNotifyName = finalName;
   return true;
 }
 
@@ -2060,6 +2067,8 @@ bool stopRecording() {
   sdUnlock();
   if (finished) {
     uploadScanRequested = true;
+    backendNotifyPending = true;
+    backendNotifyName = finishedFileName;
   }
   return finished;
 }
@@ -3186,6 +3195,36 @@ bool uploadRecordingToMinio(const String &name) {
   return uploadRecordingToMinioWith(file, name);
 }
 
+// 拉取模式通知：录音/分段就绪后 GET 后端 /fetch/notify，后端立即拉取。
+// 幂等安全：后端收到后只是触发一次轮询，重复通知无害。
+void notifyBackendNewFile(const String &name) {
+  if (!kBackendNotifyEnabled) return;
+  WiFiClient plainClient;
+  const String host = kBackendNotifyUrl;
+  const int schemeEnd = host.indexOf("//");
+  const String rest = schemeEnd > 0 ? host.substring(schemeEnd + 2) : host;
+  const int slash = rest.indexOf('/');
+  const String authority = slash > 0 ? rest.substring(0, slash) : rest;
+  const String path = slash > 0 ? rest.substring(slash) : "/";
+  const int colon = authority.lastIndexOf(':');
+  const String hostName = colon > 0 ? authority.substring(0, colon) : authority;
+  const int port = colon > 0 ? authority.substring(colon + 1).toInt() : 80;
+  plainClient.setTimeout(3000);
+  if (!plainClient.connect(hostName.c_str(), port)) {
+    Serial.println("BACKEND_NOTIFY_CONNECT_FAILED");
+    return;
+  }
+  plainClient.printf(
+      "GET %s?device=%s&file=%s HTTP/1.1\r\n"
+      "Host: %s\r\nConnection: close\r\n\r\n",
+      path.c_str(), deviceId().c_str(), name.c_str(), authority.c_str());
+  plainClient.flush();
+  String statusLine = plainClient.readStringUntil('\n');
+  const bool ok = statusLine.indexOf(" 200") > 0;
+  plainClient.stop();
+  Serial.printf("BACKEND_NOTIFY %s %s\n", name.c_str(), ok ? "OK" : statusLine.c_str());
+}
+
 bool pushLivePcmChunk(const String &device, const String &stem) {
   if (!livePushBuffer) return true;
   const size_t length = liveRingTake(livePushBuffer, kLivePushBytes);
@@ -3292,6 +3331,13 @@ void uploadTask(void *) {
       // 旧录音全部推给 MinIO，且 BLE 上报 uploading=1 + 旧文件名，
       // 把 APP 工作流搅成"没录音却显示录音中"（2026-11-24 用户反馈）。
       uploadScanRequested = false;
+      // 新文件就绪通知：把分段/录音的完成即时告知 Mac 后端（0.3.16+）
+      if (backendNotifyPending) {
+        maintainWifi();
+        notifyBackendNewFile(backendNotifyName);
+        backendNotifyPending = false;
+        backendNotifyName = "";
+      }
       maintainWifi();
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
