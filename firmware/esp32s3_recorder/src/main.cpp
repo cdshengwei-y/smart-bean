@@ -1898,10 +1898,13 @@ bool finalizeSegmentFile() {
     Serial.printf("SEGMENT_RENAME_FAILED %s\n", finalName.c_str());
     return false;
   }
-  if (dataSize < kSampleRate * 2) {
-    // 不足 1 秒的尾巴没有转写价值，直接丢弃。
+  if (dataSize < (uint32_t)kSampleRate * 2 * kSegmentSeconds) {
+    // 不足一个完整分段（60s）的尾巴直接丢弃（2026-11-25 延迟优化）：
+    // 短录音的预览副本=主文件的完整重复，主文件经通知秒级拉取，
+    // 副本只会多一次设备写入 + 一次下载 + 一次重复转写。
+    // 录音中每满 60s 收尾的完整分段不受影响（dataSize 恰好满额）。
     SD.remove(finalPath);
-    Serial.printf("SEGMENT_DROPPED %s bytes=%lu\n", finalName.c_str(),
+    Serial.printf("SEGMENT_DROPPED_SHORT %s bytes=%lu\n", finalName.c_str(),
                   static_cast<unsigned long>(dataSize));
     return true;
   }
