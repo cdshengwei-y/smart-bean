@@ -225,8 +225,10 @@ constexpr char kBackendNotifyUrl[] = RECORDER_BACKEND_NOTIFY_URL;
 constexpr bool kBackendNotifyEnabled = sizeof(kBackendNotifyUrl) > 1;
 volatile bool backendNotifyPending = false;
 String backendNotifyName;
-constexpr uint32_t kLivePcmPushIntervalMs = 2000;
-constexpr size_t kLiveRingBytes = 96 * 1024;  // ~3 秒 16k s16le PCM
+constexpr uint32_t kLivePcmPushIntervalMs = 1000;
+constexpr size_t kLiveRingBytes = 320 * 1024;  // ~10 秒 16k s16le PCM（2026-11-26：
+// 实测推流周期 ~4s（单次64KB POST耗时2.4s），消费16KB/s < 生产32KB/s，ring 只存
+// 3 秒必丢一半语音，sherpa 收到断续音频解不出字。扩到 10 秒 + 每轮多搬，零丢失）
 
 // 直播 PCM 环形缓冲：audioTask 生产（写卡同时写入），uploadTask 消费
 // （网络推送）。满时丢最老数据——直播优先新鲜度。
@@ -241,7 +243,8 @@ static volatile size_t liveRingTail = 0;  // 读位置
 static volatile bool liveRingOverflow = false;
 static bool liveStreamRuntimeReady = false;
 SemaphoreHandle_t liveRingMutex;
-constexpr size_t kLivePushBytes = 64 * 1024;
+constexpr size_t kLivePushBytes = 192 * 1024;  // 每轮最多搬 12 秒音频（2026-11-26：
+// 周期~4s 时消费 48KB/s > 生产 32KB/s，追上积压；HTTP 层限制 1MB 单请求可容纳）
 // 内部 RAM 暂存：写卡锁内只做内部 RAM 拷贝，攒批后（锁外）再进 PSRAM——
 // 高频 PSRAM 访问与 SD 写卡同临界区时，实测 SD SPI 写入半途失败
 // （RECORD_WRITE_FAILED expected=1024 actual=468）。
@@ -3342,7 +3345,10 @@ void uploadTask(void *) {
         backendNotifyName = "";
       }
       maintainWifi();
-      vTaskDelay(pdMS_TO_TICKS(2000));
+      // 直播推流期间缩短循环延迟：64KB/轮 × 3s轮周期 = 21KB/s < 生产 32KB/s，
+      // ring 会溢出丢语音（sherpa 收到断续音频解不出字，2026-11-26 实测）。
+      // 推流活跃时用 800ms（64KB/1.3s ≈ 48KB/s > 32KB/s，零丢失）。
+      vTaskDelay(pdMS_TO_TICKS(liveStreamActive ? 800 : 2000));
       continue;
     }
     sdLock();
