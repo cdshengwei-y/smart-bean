@@ -559,6 +559,40 @@ class JobRepository:
         )
         self.connection.commit()
 
+    def latest_transcript_for(
+        self, stem: str, device_id: str = ""
+    ) -> Optional[sqlite3.Row]:
+        """按录音名取最近一条有文字的转写行（App 历史回看用）。
+
+        - 权威行（object_name 不含 /live/）优先，退回 live 流式预览行；
+        - stem 里的 ``_``/``%`` 是 LIKE 通配符，必须 ESCAPE，
+          否则 ``REC_A_B`` 会误命中 ``REC_AXB``；
+        - 不硬绑 device_id（fetcher 默认写 bean_ye_2，固件上报 id 可能
+          不同），只做排序偏好。
+        """
+        escaped = stem.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        device_preference = ""
+        params: list = ["%/" + escaped + ".wav"]
+        if device_id:
+            device_preference = "(device_id = ?) DESC, "
+            # 占位符顺序跟随 SQL 文本：WHERE 的 LIKE ? 在前，
+            # ORDER BY 的 device_id = ? 在后。
+            params.append(device_id)
+        row = self.connection.execute(
+            """
+            SELECT id, device_id, object_name, status, transcript, updated_at
+            FROM transcription_jobs
+            WHERE transcript != '' AND object_name LIKE ? ESCAPE '\\'
+            ORDER BY """
+            + device_preference
+            + "(object_name LIKE '%/live/%') ASC, id DESC"
+            """
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+        return row
+
     def claim_next_note(
         self, max_attempts: int, retry_delay_seconds: float
     ) -> Optional[StoredTextJob]:

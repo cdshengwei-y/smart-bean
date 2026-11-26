@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'appearance_settings.dart';
 import 'controller.dart';
 import 'models.dart';
+import 'transcript_page.dart';
 import 'privacy.dart';
 import 'services/auth_api.dart';
 import 'services/ble_recorder.dart';
@@ -2232,37 +2233,50 @@ class _ControlPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
-      child: RefreshIndicator(
-        onRefresh: controller.refreshControlPage,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-          children: [
-            if (controller.unifiedAppUpdateNeeded &&
-                (controller.unifiedRelease?.appUrl.isNotEmpty ?? false)) ...[
-              _AppUpdateBanner(controller: controller),
-              const SizedBox(height: 10),
-            ],
-            if (controller.bleConnected &&
-                controller.unifiedFirmwareUpdateNeeded) ...[
-              _FirmwareUpdateBanner(controller: controller),
-              const SizedBox(height: 10),
-            ],
-            if (controller.downloadingFileName.isNotEmpty) ...[
-              _DownloadProgressPanel(controller: controller),
-              const SizedBox(height: 10),
-            ],
-            _WorkflowPanel(controller: controller),
-            const SizedBox(height: 10),
-            _BlePanel(controller: controller),
-            const SizedBox(height: 10),
-            _RecordingStatusPanel(controller: controller),
-            const SizedBox(height: 10),
-            _LiveTranscriptionPanel(controller: controller),
-            const SizedBox(height: 10),
-            _TranscriptionPanel(controller: controller),
-          ],
-        ),
+      child: Column(
+        children: [
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: controller.refreshControlPage,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+                children: [
+                  if (controller.unifiedAppUpdateNeeded &&
+                      (controller.unifiedRelease?.appUrl.isNotEmpty ??
+                          false)) ...[
+                    _AppUpdateBanner(controller: controller),
+                    const SizedBox(height: 10),
+                  ],
+                  if (controller.bleConnected &&
+                      controller.unifiedFirmwareUpdateNeeded) ...[
+                    _FirmwareUpdateBanner(controller: controller),
+                    const SizedBox(height: 10),
+                  ],
+                  if (controller.downloadingFileName.isNotEmpty) ...[
+                    _DownloadProgressPanel(controller: controller),
+                    const SizedBox(height: 10),
+                  ],
+                  _WorkflowPanel(controller: controller),
+                  const SizedBox(height: 10),
+                  _BlePanel(controller: controller),
+                  const SizedBox(height: 10),
+                  _RecordingStatusPanel(controller: controller),
+                  // 实时转写已独立成页（transcript_page.dart），
+                  // 这里只留入口卡；无数据时不占位。
+                  if (controller.bleRecording ||
+                      controller.hasLiveTranscript) ...[
+                    const SizedBox(height: 10),
+                    _TranscriptEntryCard(controller: controller),
+                  ],
+                  const SizedBox(height: 10),
+                  _TranscriptionPanel(controller: controller),
+                ],
+              ),
+            ),
+          ),
+          _ControlActionBar(controller: controller),
+        ],
       ),
     );
   }
@@ -2737,47 +2751,75 @@ class _BlePanel extends StatelessWidget {
               const SizedBox(height: 8),
               _DeviceButton(controller: controller, device: device),
             ],
-            if (controller.bleConnected || controller.bleConnecting) ...[
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: FilledButton.icon(
-                  // 连接中也不置灰（2026-11-20 用户反馈：点设备后应直接看到
-                  // 亮色"开始录音"，不要"正在准备录音"灰按钮和亮灰闪烁）。
-                  onPressed: controller.bleConnected
-                      ? () => _toggleRecording(context)
-                      : null,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: controller.bleRecording
-                        ? danger
-                        : Theme.of(context).colorScheme.primary,
-                    // 连接中保持亮色外观（只是暂不可点）。
-                    disabledBackgroundColor:
-                        controller.bleRecording
-                        ? danger
-                        : Theme.of(context).colorScheme.primary,
-                    disabledForegroundColor: Colors.white,
-                  ),
-                  icon: Icon(
-                    controller.bleRecording
-                        ? Icons.stop_circle_outlined
-                        : Icons.mic,
-                  ),
-                  label: Text(
-                    controller.bleRecording ? '停止录音' : '开始录音',
-                    style: const TextStyle(fontSize: 17),
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
       ),
     );
   }
+}
 
-  Future<void> _toggleRecording(BuildContext context) async {
+/// 控制页吸底操作条：固定在 tab 栏上方，内容区滚动不影响。
+/// 开始/停止录音的唯一入口；开始成功后自动进入转写页。
+class _ControlActionBar extends StatelessWidget {
+  const _ControlActionBar({required this.controller});
+  final RecordingBeanController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final recording = controller.bleRecording;
+    final enabled = controller.bleConnected;
+    return Material(
+      color: scheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: scheme.outlineVariant)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (!enabled)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    controller.bleConnecting ? '正在连接录音豆…' : '连接录音豆后即可开始录音',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  ),
+                ),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: FilledButton.icon(
+                  onPressed: enabled ? () => _toggle(context) : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: recording ? danger : scheme.primary,
+                    disabledBackgroundColor: recording
+                        ? danger
+                        : scheme.primary.withValues(alpha: 0.5),
+                    disabledForegroundColor: scheme.onPrimary,
+                  ),
+                  icon: Icon(
+                    recording ? Icons.stop_circle_outlined : Icons.mic,
+                  ),
+                  label: Text(
+                    recording ? '停止录音' : '开始录音',
+                    style: const TextStyle(fontSize: 17),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggle(BuildContext context) async {
     if (!controller.bleRecording && !await ensurePrivacyConsent(context)) {
       return;
     }
@@ -2788,7 +2830,69 @@ class _BlePanel extends StatelessWidget {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('录音操作失败：$error')));
+      return;
     }
+    if (!context.mounted) return;
+    // 只有确认进入录音态才跳页：_sendRecordingCommand 失败不抛异常，
+    // 只能靠状态判断，避免"开始失败却跳到空转写页"。
+    if (!controller.bleRecording) {
+      if (!controller.bleConnected) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(controller.bleMessage)));
+      }
+      return;
+    }
+    await openTranscriptPage(context, controller);
+  }
+}
+
+/// 控制页入口：录音中/刚结束时显示"已出 N 句"，点击回到转写页。
+class _TranscriptEntryCard extends StatelessWidget {
+  const _TranscriptEntryCard({required this.controller});
+  final RecordingBeanController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final recording = controller.bleRecording;
+    final count = controller.liveSentences.length;
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => openTranscriptPage(context, controller),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Icon(Icons.subtitles_outlined, color: scheme.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      recording ? '实时转写中' : '本次录音转写',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${recording ? '已出' : '共'} $count 句 · 点击查看',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: scheme.outline),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2821,88 +2925,8 @@ class _DeviceButton extends StatelessWidget {
   }
 }
 
-/// 直播实时字幕卡片：录音中显示 sherpa 流式引擎的 partial 与已定稿句。
-class _LiveTranscriptionPanel extends StatelessWidget {
-  const _LiveTranscriptionPanel({required this.controller});
-  final RecordingBeanController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final recording = controller.bleConnected && controller.bleRecording;
-    final show = recording && controller.liveActive;
-    if (!show) {
-      return const SizedBox.shrink();
-    }
-    final sentences = controller.liveSentences;
-    final partial = controller.livePartial;
-    final recent = sentences.length > 6
-        ? sentences.sublist(sentences.length - 6)
-        : sentences;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                SizedBox.square(
-                  dimension: 10,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '实时转写中 · 已出 ${sentences.length} 句',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (recent.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 180),
-                child: SingleChildScrollView(
-                  reverse: true,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final sentence in recent)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            sentence,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            if (partial.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  partial,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                        fontStyle: FontStyle.italic,
-                      ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+/// 直播实时字幕已迁移到独立页面（transcript_page.dart）：
+/// 支持自动跟随/暂停/回到最新，且兼作历史转写回看页。
 
 class _RecordingStatusPanel extends StatelessWidget {
   const _RecordingStatusPanel({required this.controller});
@@ -4891,6 +4915,18 @@ class _FileTile extends StatelessWidget {
                 ),
               ),
               if (!controller.selectionMode) ...[
+                IconButton(
+                  onPressed: deleting
+                      ? null
+                      : () => openTranscriptPage(
+                            context,
+                            controller,
+                            recordingName: file.name,
+                          ),
+                  tooltip: '查看转写',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.subtitles_outlined),
+                ),
                 IconButton(
                   onPressed: controller.downloadingFileName.isEmpty && !deleting
                       ? () => controller.downloadFile(file)

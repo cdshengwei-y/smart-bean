@@ -48,6 +48,23 @@ class DeviceApi {
         },
       );
 
+  /// 历史转写全文（录音结束后回看）。服务端没有记录时返回 404。
+  Future<Map<String, dynamic>> transcript(
+    Uri base,
+    String device,
+    String recording,
+  ) async =>
+      await _jsonRequest(
+        base,
+        'GET',
+        '/api/transcript',
+        query: {
+          'device': device,
+          'recording': recording,
+        },
+        acceptedErrors: const {404},
+      );
+
   /// BLE 连接性能打点上报（后端仅记录日志）。
   Future<void> postPerf(Uri base, List<String> traceLines) async {
     final payload = '{"trace": [${traceLines.join(",")}]}';

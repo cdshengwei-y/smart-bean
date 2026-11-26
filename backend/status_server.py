@@ -547,6 +547,9 @@ class StatusHandler(BaseHTTPRequestHandler):
         if path == "/live/frame":
             self.live_frame()
             return
+        if path == "/api/transcript":
+            self.transcript_lookup()
+            return
         if path == "/perf":
             body = self.read_request_body(maximum_bytes=4000).decode("utf-8")
             print("[PERF] " + body, flush=True)
@@ -788,6 +791,40 @@ class StatusHandler(BaseHTTPRequestHandler):
         from app import live_engine
 
         self.send_json(HTTPStatus.OK, live_engine.snapshot(device_id, stem))
+
+    def transcript_lookup(self) -> None:
+        """按录音名回看已落库的完整转写（APP 历史回看用）。
+
+        与 /api/status 同一信任域（局域网明文），只回转写文本与元数据。
+        """
+        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+        device_id = query.get("device", [""])[0].strip()
+        stem = query.get("recording", [""])[0].strip()
+        if stem.lower().endswith(".wav"):
+            stem = stem[:-4]
+        if not stem:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": "recording required"})
+            return
+        repository = JobRepository(self.database_path, ensure_schema=False)
+        try:
+            row = repository.latest_transcript_for(stem, device_id)
+        finally:
+            repository.close()
+        if row is None:
+            self.send_json(HTTPStatus.NOT_FOUND, {"error": "无转写记录"})
+            return
+        text = str(row["transcript"] or "")
+        self.send_json(
+            HTTPStatus.OK,
+            {
+                "device_id": str(row["device_id"]),
+                "recording": stem,
+                "status": str(row["status"]),
+                "updated_at": str(row["updated_at"]),
+                "text": text,
+                "sentences": [line.strip() for line in text.splitlines() if line.strip()],
+            },
+        )
 
     def inbox_create_multipart(self) -> None:
         settings = receiver_settings()

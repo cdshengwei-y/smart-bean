@@ -3297,7 +3297,11 @@ void uploadTask(void *) {
         // 拉取模式：Mac 服务轮询设备 /files 拉录音——WiFi 保持连接
         // （设备自身无上传任务，WiFi 只服务拉取与 OTA）。
         maintainWifi();
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        // 直播推流等待节奏：早先固定 2s，叠加推流执行本身，实测
+        // 4~5s 才推出一包（设的 1s 间隔失效），说完话 6~10s 才出字
+        // （2026-11-26 日志实测）。推流活跃时缩到 150ms，让 1s
+        // 推流间隔真正生效。
+        vTaskDelay(pdMS_TO_TICKS(liveStreamActive ? 150 : 2000));
         continue;
       }
       // Keep BLE available without scanning the TF card while idle.
@@ -3306,7 +3310,7 @@ void uploadTask(void *) {
       } else {
         stopWifiWhenIdle();
       }
-      vTaskDelay(pdMS_TO_TICKS(2000));
+      vTaskDelay(pdMS_TO_TICKS(liveStreamActive ? 150 : 2000));
       continue;
     }
     if (livePending || (liveStreamActive && liveRingAvailable() > 0)) {
@@ -3345,10 +3349,10 @@ void uploadTask(void *) {
         backendNotifyName = "";
       }
       maintainWifi();
-      // 直播推流期间缩短循环延迟：64KB/轮 × 3s轮周期 = 21KB/s < 生产 32KB/s，
-      // ring 会溢出丢语音（sherpa 收到断续音频解不出字，2026-11-26 实测）。
-      // 推流活跃时用 800ms（64KB/1.3s ≈ 48KB/s > 32KB/s，零丢失）。
-      vTaskDelay(pdMS_TO_TICKS(liveStreamActive ? 800 : 2000));
+      // 推流活跃时 150ms 空转：配合 1s 推流间隔（kLivePcmPushIntervalMs），
+      // 说完话到音频离开设备 ≈1s，不再被 2s 空转拖成 4~5s/包
+      // （2026-11-26 提速改造；早期 800ms 方案仍嫌慢）。
+      vTaskDelay(pdMS_TO_TICKS(liveStreamActive ? 150 : 2000));
       continue;
     }
     sdLock();

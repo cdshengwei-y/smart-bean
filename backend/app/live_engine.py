@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import math
+import os
+import queue
 import struct
 import threading
 import time
@@ -37,6 +39,12 @@ _lock = threading.RLock()
 _recognizer = None
 _finalize_pool = None
 _sessions: Dict[str, dict] = {}  # key: f"{device_id}/{stem}"
+
+# 异步解码（2026-11-26 提速）：/live/stream 的 POST 曾同步解码后才返回，
+# 设备 HTTP 往返被解码耗时拉长，实测推流周期 2~5s、出字滞后 2~4s。
+# 改为入队即返回，后台线程按到达顺序解码；RECORDER_LIVE_ASYNC=0 回退同步。
+_DECODE_QUEUE_MAX_CHUNKS = 64  # ~4MB 上限，正常解码远快于实时不会堆积
+_decode_queue: Optional["queue.Queue"] = None
 
 
 def is_available() -> bool:
@@ -312,57 +320,145 @@ def _finalize_utterance(key: str, session: dict, recognizer) -> None:
     _write_live_note(session)
 
 
+def _async_decode_enabled() -> bool:
+    return os.environ.get("RECORDER_LIVE_ASYNC", "1") != "0"
+
+
+def _get_decode_queue() -> "queue.Queue":
+    global _decode_queue
+    if _decode_queue is None:
+        _decode_queue = queue.Queue(maxsize=_DECODE_QUEUE_MAX_CHUNKS)
+        worker = threading.Thread(
+            target=_decode_worker, name="live-decode", daemon=True
+        )
+        worker.start()
+    return _decode_queue
+
+
+def _decode_worker() -> None:
+    """按到达顺序解码设备推来的 PCM；异常不吞任务，保证会话状态机连续。"""
+    while True:
+        item = _decode_queue.get()
+        if item is None:
+            continue
+        device_id, stem, pcm_bytes, received_at = item
+        queue_wait_ms = (time.time() - received_at) * 1000.0
+        try:
+            decode_start = time.time()
+            # 会话状态（partial/utterances/stream）必须串行改写；
+            # _lock 是 RLock，worker 线程内再进 snapshot() 可重入。
+            with _lock:
+                _feed_pcm_locked(device_id, stem, pcm_bytes)
+            decode_ms = (time.time() - decode_start) * 1000.0
+            # 观测指标：queue_wait 是设备→解码的滞后面，decode 是引擎开销
+            print(
+                "[%s] [LIVE][DBG] decode queue_wait=%.0fms decode=%.0fms" % (
+                    time.strftime("%H:%M:%S"), queue_wait_ms, decode_ms
+                ),
+                flush=True,
+            )
+        except Exception as error:  # noqa: BLE001
+            print(
+                "[%s] [LIVE] 异步解码失败 %s/%s: %s: %s" % (
+                    time.strftime("%H:%M:%S"), device_id, stem,
+                    type(error).__name__, error,
+                ),
+                flush=True,
+            )
+
+
 def feed_pcm(device_id: str, stem: str, pcm_bytes: bytes) -> Dict[str, Any]:
-    """设备推来的 PCM → 流式解码 → 更新 partial / 定稿。"""
-    recognizer = _get_recognizer()
+    """设备推来的 PCM → 流式解码 → 更新 partial / 定稿。
+
+    异步模式：PCM 入队立即返回当前快照（设备 HTTP 往返 ≤ 数十 ms），
+    解码由后台线程串行执行；会话创建/保活也在入队前同步完成，保证
+    会话开始日志与 feed# 序号语义不变。
+    """
     key = "%s/%s" % (device_id, stem)
     with _lock:
         session = _sessions.get(key)
         if session is None:
-            session = _new_session(key, device_id, stem)
+            _get_recognizer()
+            _new_session(key, device_id, stem)
+            session = _sessions[key]
             print(
                 "[%s] [LIVE] 会话开始 %s" % (time.strftime("%H:%M:%S"), key),
                 flush=True,
             )
         session["last_active"] = time.time()
 
-        n = len(pcm_bytes) // 2
-        if n == 0:
+    if _async_decode_enabled() and len(pcm_bytes) > 0:
+        try:
+            _get_decode_queue().put_nowait(
+                (device_id, stem, pcm_bytes, time.time())
+            )
             return snapshot(device_id, stem)
-        raw = struct.unpack(f"<{n}h", pcm_bytes[: n * 2])
-        raw_rms = math.sqrt(sum(s * s for s in raw) / n)
-        raw_rms_db = 20 * math.log10(raw_rms / 32768) if raw_rms > 0 else -99.0
-        samples = _normalize_samples(list(raw))
-        stream = session["stream"]
-        # 必须归一到 [-1, 1] 浮点：整型直喂振幅超万倍，识别直接乱码
-        stream.accept_waveform(_PCM_RATE, [s / 32768.0 for s in samples])
-        while recognizer.is_ready(stream):
-            recognizer.decode_stream(stream)
-        partial = str(recognizer.get_result(stream) or "").strip()
-        if partial != session.get("_prev_partial"):
-            session["_prev_partial"] = partial
+        except queue.Full:
+            # 队列满 = 解码持续落后于实时：丢弃本包防雪崩，打印告警
             print(
-                "[%s] [LIVE] decode rms=%.1f partial=%r" % (
-                    time.strftime("%H:%M:%S"), raw_rms_db, partial
+                "[%s] [LIVE] 解码队列已满，丢弃 %d 字节" % (
+                    time.strftime("%H:%M:%S"), len(pcm_bytes)
                 ),
                 flush=True,
             )
-        session["partial"] = partial
+            return snapshot(device_id, stem)
 
-        session["utterance_pcm"].extend(pcm_bytes)
-        max_pcm = int(_MAX_UTTERANCE_SECONDS * _PCM_RATE) * 2
-        if recognizer.is_endpoint(stream) or len(session["utterance_pcm"]) >= max_pcm:
-            try:
-                _finalize_utterance(key, session, recognizer)
-            except Exception as error:  # noqa: BLE001 - 定稿崩了不能静默死亡
-                print(
-                    "[%s] [LIVE] finalize 异常: %s: %s" % (
-                        time.strftime("%H:%M:%S"), type(error).__name__, error
-                    ),
-                    flush=True,
-                )
-                session["utterance_pcm"].extend(pcm_bytes)
+    with _lock:
+        return _feed_pcm_locked(device_id, stem, pcm_bytes)
+
+
+def _feed_pcm_locked(device_id: str, stem: str, pcm_bytes: bytes) -> Dict[str, Any]:
+    """同步解码路径（调用方必须已持有 _lock）。"""
+    recognizer = _get_recognizer()
+    key = "%s/%s" % (device_id, stem)
+    session = _sessions.get(key)
+    if session is None:
+        # 兜底：异步路径已在 feed_pcm 创建会话，正常不会走到这里；
+        # 同步模式（RECORDER_LIVE_ASYNC=0）靠这里建会话。
+        session = _new_session(key, device_id, stem)
+        print(
+            "[%s] [LIVE] 会话开始 %s" % (time.strftime("%H:%M:%S"), key),
+            flush=True,
+        )
+    session["last_active"] = time.time()
+
+    n = len(pcm_bytes) // 2
+    if n == 0:
         return snapshot(device_id, stem)
+    raw = struct.unpack(f"<{n}h", pcm_bytes[: n * 2])
+    raw_rms = math.sqrt(sum(s * s for s in raw) / n)
+    raw_rms_db = 20 * math.log10(raw_rms / 32768) if raw_rms > 0 else -99.0
+    samples = _normalize_samples(list(raw))
+    stream = session["stream"]
+    # 必须归一到 [-1, 1] 浮点：整型直喂振幅超万倍，识别直接乱码
+    stream.accept_waveform(_PCM_RATE, [s / 32768.0 for s in samples])
+    while recognizer.is_ready(stream):
+        recognizer.decode_stream(stream)
+    partial = str(recognizer.get_result(stream) or "").strip()
+    if partial != session.get("_prev_partial"):
+        session["_prev_partial"] = partial
+        print(
+            "[%s] [LIVE] decode rms=%.1f partial=%r" % (
+                time.strftime("%H:%M:%S"), raw_rms_db, partial
+            ),
+            flush=True,
+        )
+    session["partial"] = partial
+
+    session["utterance_pcm"].extend(pcm_bytes)
+    max_pcm = int(_MAX_UTTERANCE_SECONDS * _PCM_RATE) * 2
+    if recognizer.is_endpoint(stream) or len(session["utterance_pcm"]) >= max_pcm:
+        try:
+            _finalize_utterance(key, session, recognizer)
+        except Exception as error:  # noqa: BLE001 - 定稿崩了不能静默死亡
+            print(
+                "[%s] [LIVE] finalize 异常: %s: %s" % (
+                    time.strftime("%H:%M:%S"), type(error).__name__, error
+                ),
+                flush=True,
+            )
+            session["utterance_pcm"].extend(pcm_bytes)
+    return snapshot(device_id, stem)
 
 
 def snapshot(device_id: str, stem: str) -> Dict[str, Any]:

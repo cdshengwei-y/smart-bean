@@ -16,6 +16,7 @@ import 'models.dart';
 import 'services/ble_recorder.dart';
 import 'services/device_api.dart';
 import 'services/mdns_discovery.dart';
+import 'transcript.dart';
 
 class RecordingBeanController extends ChangeNotifier {
   RecordingBeanController({
@@ -144,13 +145,29 @@ class RecordingBeanController extends ChangeNotifier {
   double? bleSdTotalMb;
   String bleCurrentFile = '';
   // 直播流式引擎快照（/live/frame）：录音中每 2.5 秒轮询一次，
-  // 工作流面板显示实时字幕（sherpa partial + 已定稿句）。
+  // 实时字幕展示在独立的转写页（transcript_page.dart）。
   bool liveActive = false;
   String livePartial = '';
   List<String> liveSentences = const [];
   String liveText = '';
   Timer? _liveFrameTimer;
   int _liveFrameInflight = 0;
+
+  /// 当前实时数据对应的录音 stem（不含 .wav）。
+  /// 「刚录完直接回看」时优先复用这份内存数据，后端重启也不丢。
+  String liveTranscriptStem = '';
+
+  /// 历史回看（录音文件页进入）：与实时数据分开存放，避免互相覆盖。
+  String historyStem = '';
+  List<String> historySentences = const [];
+  String historyPartial = '';
+  bool historyLoading = false;
+  String historyMessage = '';
+  int _transcriptRequestId = 0;
+
+  /// 控制页「实时转写」入口卡是否显示的判据。
+  bool get hasLiveTranscript =>
+      liveSentences.isNotEmpty || livePartial.isNotEmpty;
   String bleFirmware = '';
   String bleOtaStatus = '';
   String bleWifiAddress = '';
@@ -439,10 +456,8 @@ class RecordingBeanController extends ChangeNotifier {
       _lastWfSignature = '';
       debugPrint('[WF] session reset on connect');
       _reportWorkflowState('reset-connect');
-      liveActive = false;
-      livePartial = '';
-      liveSentences = const [];
-      liveText = '';
+      // 注意：这里刻意不清 live 转写数据——断线/重连后转写页要保留
+      // 已收到的内容；真正的清理在每次 START 的 _resetLiveTranscript()。
       _reconnectAttempts = 0;
       _reconnectTimer?.cancel();
       unawaited(
@@ -657,8 +672,12 @@ class RecordingBeanController extends ChangeNotifier {
       if (command == 'STOP') {
         bleRecording = false;
         workflowWritingToTfCard = true;
+        // 立即停轮询，不等下一次 BLE 状态上报
+        _syncLiveFramePolling();
       }
       if (command.startsWith('START')) {
+        // 新会话：清掉上一段录音的残留句子，避免混入新转写
+        _resetLiveTranscript();
         bleRecording = true;
         bleRecordingSeconds = 0;
         bleCurrentFile = '';
@@ -1904,17 +1923,107 @@ class RecordingBeanController extends ChangeNotifier {
     return '操作失败，请稍后重试';
   }
 
+  String _liveDeviceId() {
+    final id = status.deviceId.trim();
+    return id.isNotEmpty ? id : pairedRecorderDeviceId.trim();
+  }
+
+  /// 清空实时与历史快照（只在"新录音开始"时调用；
+  /// 断线保留内容，让转写页还能回看已收到的文字）。
+  void _resetLiveTranscript() {
+    liveActive = false;
+    livePartial = '';
+    liveSentences = const [];
+    liveText = '';
+    liveTranscriptStem = '';
+    historyStem = '';
+    historySentences = const [];
+    historyPartial = '';
+    historyMessage = '';
+    _transcriptRequestId += 1;
+  }
+
+  /// 手动刷新一帧实时转写（转写页刷新按钮 / 前台恢复）。
+  Future<void> refreshLiveFrame() => _pollLiveFrame();
+
+  /// 历史转写回看。recordingName 可以是 `REC_001.wav` 或完整对象路径。
+  Future<void> loadTranscript(String recordingName) async {
+    final stem = normalizeRecordingStem(recordingName);
+    final requestId = ++_transcriptRequestId;
+    historyStem = stem;
+    historyLoading = true;
+    historyMessage = '';
+    historySentences = const [];
+    historyPartial = '';
+    notifyListeners();
+
+    if (stem.isEmpty) {
+      historyLoading = false;
+      historyMessage = '无法识别录音名称';
+      notifyListeners();
+      return;
+    }
+    // 本次刚录完的那条：优先复用内存，后端重启后也不丢
+    if (stem == liveTranscriptStem && hasLiveTranscript) {
+      historySentences = liveSentences;
+      historyPartial = livePartial;
+      historyLoading = false;
+      notifyListeners();
+      return;
+    }
+
+    final device = _liveDeviceId();
+    try {
+      final base = _api.normalizeAddress(
+        backendStatusAddress,
+        statusService: true,
+      );
+      if (device.isNotEmpty) {
+        // 先试内存 session（覆盖"本次刚录完"），再落 DB 兜底
+        final frame = TranscriptFrame.fromJson(
+          await _api.liveFrame(base, device, stem),
+        );
+        if (requestId != _transcriptRequestId) return;
+        if (!frame.isEmpty) {
+          historySentences = frame.sentences;
+          historyPartial = frame.partial;
+          historyLoading = false;
+          notifyListeners();
+          return;
+        }
+      }
+      final result = await _api.transcript(base, device, stem);
+      if (requestId != _transcriptRequestId) return;
+      final text = (result['text'] as String? ?? '').trim();
+      historySentences = splitTranscriptText(text);
+      historyPartial = '';
+      historyLoading = false;
+      historyMessage = historySentences.isEmpty ? '该录音无转写记录' : '';
+      notifyListeners();
+    } catch (error) {
+      if (requestId != _transcriptRequestId) return;
+      historyLoading = false;
+      final message = error.toString();
+      historyMessage = message.contains('HTTP 404')
+          ? '该录音无转写记录'
+          : '转写读取失败：${_userMessage(error)}';
+      notifyListeners();
+    }
+  }
+
   void _syncLiveFramePolling() {
     final shouldPoll = bleConnected && bleRecording;
     if (shouldPoll && _liveFrameTimer == null) {
       unawaited(_pollLiveFrame());
-      _liveFrameTimer = Timer.periodic(const Duration(milliseconds: 2500), (_) {
+      // 1s 轮询：出字延迟大头在固件推流节奏，App 侧 1s 是局域网
+      // 轻量 JSON 的合理下限（2026-11-26 提速，原 2.5s 平均多等 1.2s）。
+      _liveFrameTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
         unawaited(_pollLiveFrame());
       });
     } else if (!shouldPoll && _liveFrameTimer != null) {
       _liveFrameTimer?.cancel();
       _liveFrameTimer = null;
-      // 停止录音后保留最后一帧快照（用户可能还在看），只清 partial 状态
+      // 停止录音后保留最后一帧快照（转写页还要回看），只清 partial 状态
       livePartial = '';
       liveActive = false;
       notifyListeners();
@@ -1925,22 +2034,33 @@ class RecordingBeanController extends ChangeNotifier {
     if (_liveFrameInflight > 0) return;
     _liveFrameInflight++;
     try {
-      final device = status.deviceId.trim().isNotEmpty
-          ? status.deviceId.trim()
-          : pairedRecorderDeviceId.trim();
-      var stem = bleCurrentFile.trim();
-      if (stem.endsWith('.wav')) stem = stem.substring(0, stem.length - 4);
+      final device = _liveDeviceId();
+      final stem = normalizeRecordingStem(bleCurrentFile);
       if (device.isEmpty || stem.isEmpty) return;
       final base = _api.normalizeAddress(
         backendStatusAddress,
         statusService: true,
       );
-      final frame = await _api.liveFrame(base, device, stem);
-      liveActive = frame['active'] == true;
-      livePartial = (frame['partial'] ?? '') as String;
-      liveSentences = (frame['sentences'] as List?)?.cast<String>() ?? const [];
-      liveText = (frame['text'] ?? '') as String;
-      notifyListeners();
+      final frame = TranscriptFrame.fromJson(
+        await _api.liveFrame(base, device, stem),
+      );
+      final changed = frame.active != liveActive ||
+          frame.partial != livePartial ||
+          frame.text != liveText ||
+          frame.sentences.length != liveSentences.length ||
+          stem != liveTranscriptStem;
+      if (frame.active) {
+        liveActive = true;
+        livePartial = frame.partial;
+        liveSentences = frame.sentences;
+        liveText = frame.text;
+      } else {
+        // 服务端会话被清理（重启）时保留已收到的句子，别把转写页清空
+        liveActive = false;
+      }
+      liveTranscriptStem = stem;
+      // 内容没变就不 notify：避免首页/文件页每 2.5 秒无谓全量重建
+      if (changed) notifyListeners();
     } catch (_) {
       // 流式引擎不可用时静默退化为普通工作流展示
     } finally {
